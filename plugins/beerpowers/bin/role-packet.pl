@@ -291,8 +291,7 @@ sub stage_six_setup {
     my $reminders = '';
     for my $repo (@$products) {
         my $guide = "memory/commands/$repo.md";
-        my ($command) = -f $guide ? read_file($guide) =~ /^\x60{3}text\r?\n([^\r\n]+)\r?\n\x60{3}/m : ();
-        $command //= $test_inputs->{$repo}{command};
+        my $command = $test_inputs->{$repo}{command};
         my ($defaults) = discover_project_rules("projects/$repo", $track || 'dev', $size);
         my %stack = map { $_ => 1 } @{$defaults->{stacks}};
         for my $scope ("*/projects/$repo/", "*/worktrees/*/$repo/") {

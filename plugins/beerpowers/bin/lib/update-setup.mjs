@@ -1,6 +1,5 @@
 // Сверяет восстановление настроек setup при обновлении собранного workspace.
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { workspacePath } from './ui-workspace.mjs';
 
@@ -11,24 +10,9 @@ function perlPath() {
   return join(dirname(dirname(git)), 'usr', 'bin', 'perl.exe');
 }
 
-function savedChecks(root) {
-  const products = readdirSync(workspacePath(root, 'projects'), {withFileTypes:true})
-    .filter(item => item.isDirectory() && lstatSync(join(root, 'projects', item.name, '.git'), {throwIfNoEntry:false}));
-  const checks = Object.create(null);
-  for (const {name} of products) {
-    const path = 'memory/commands/' + name + '.md';
-    const content = readFileSync(workspacePath(root, path), 'utf8').replaceAll('\r\n', '\n');
-    const source = /^Источник: \x60([^\x60\n]+)\x60$/m.exec(content)?.[1];
-    const command = /^\x60{3}text\n([^\n]+)\n\x60{3}$/m.exec(content)?.[1];
-    if (!source || !command) throw Error('Missing saved test command/source: ' + path);
-    checks[name] = {command, source};
-  }
-  return checks;
-}
-
 export function workspaceCheck(root, pkg, mode) {
-  const checks = mode === 'plan-json' ? savedChecks(root) : {};
-  const env = {...process.env, BEERPOWERS_TESTS_JSON:JSON.stringify(checks)};
+  const env = {...process.env};
+  delete env.BEERPOWERS_TESTS_JSON;
   delete env.BEERPOWERS_TRACK; // An update preserves the chosen product/development track.
   try {
     return execFileSync(perlPath(), [join(pkg, 'bin', 'workspace.pl'), mode], {

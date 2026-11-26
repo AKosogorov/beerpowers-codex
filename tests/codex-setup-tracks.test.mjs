@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,7 @@ function findPerl() {
   return execFileSync('where.exe', ['git.exe'], {encoding: 'utf8'}).trim().split(/\r?\n/)
     .map(git => resolve(dirname(git), '../usr/bin/perl.exe')).find(file => existsSync(file)) ?? 'perl';
 }
-function fixture(t) {
+function fixture(t, product = 'api') {
   const root = mkdtempSync(join(tmpdir(), 'beerpowers-tracks-'));
   t.after(() => rmSync(root, {recursive: true, force: true, maxRetries: 3}));
   const env = {...process.env, BEERPOWERS_PERL: findPerl(), BEERPOWERS_TEST_SOURCE: 'README.md', BEERPOWERS_TEST_COMMAND: 'git diff --check',
@@ -29,8 +29,8 @@ function fixture(t) {
   delete env.BEERPOWERS_SETUP_DEPENDENCIES_JSON;
   const put = (file, body) => { mkdirSync(dirname(join(root, file)), {recursive: true}); writeFileSync(join(root, file), body); };
   const read = file => readFileSync(join(root, file), 'utf8');
-  put('projects/api/README.md', 'Tests: git diff --check\n');
-  for (const cwd of [root, join(root, 'projects/api')]) execFileSync('git', ['init', '-q'], {cwd, env});
+  put(`projects/${product}/README.md`, 'Tests: git diff --check\n');
+  for (const cwd of [root, join(root, 'projects', product)]) execFileSync('git', ['init', '-q'], {cwd, env});
   function run(binary, args, track, options = {}) {
     const result = spawnSync(binary, args, {cwd: root, encoding: 'utf8',
       env: {...env, ...(track ? {BEERPOWERS_TRACK: track} : {}), ...options}});
@@ -44,6 +44,95 @@ function fixture(t) {
     setup: (mode, track, options) => run(env.BEERPOWERS_PERL, [join(pkg, 'bin/workspace.pl'), mode], track, options),
     update: track => JSON.parse(run(process.execPath, [join(pkg, 'bin/update.mjs'), 'plan'], track))};
 }
+
+test('setup preserves the existing gate notes for both school landing products', t => {
+  const products = ['online-school-1-com', 'school-landing-clone'];
+  const f = fixture(t, products[0]);
+  const notes = products.map(name => `memory/commands/${name}.md`);
+  const checks = {};
+  for (const name of products) {
+    const product = `projects/${name}`;
+    f.put(`${product}/package.json`, JSON.stringify({scripts: {build: 'node -e "process.exit(99)"'}}));
+    if (name !== products[0]) f.git(product, 'init', '-q');
+    checks[name] = {command: 'npm run build', source: 'package.json', profile: 'main-default'};
+  }
+  f.put(notes[0], '# Команды — форк `online-school-1-com`\n\n## Запуск\n\n' +
+    '- `npm --prefix projects/online-school-1-com ci`.\n\n## Гейты\n\n' +
+    '- **Сборка** — проверка типов:\n' +
+    '  `npm --prefix projects/online-school-1-com run build > <лог> 2>&1; echo CODE=$? >> <лог>`.\n' +
+    '  Код выхода — по маркеру `CODE=`.\n\n## Линт\n');
+  f.put(notes[1], '\uFEFF' + ('# Команды — клон `school-landing-clone`\n\n## Запуск\n\n' +
+    '- `PATH="/opt/node:$PATH" npm --prefix projects/school-landing-clone run build`.\n\n## Гейты\n\n' +
+    '- **Сборка** — проверка типов:\n' +
+    '  `npm --prefix projects/school-landing-clone run build > <лог> 2>&1; echo CODE=$? >> <лог>`.\n' +
+    '  При setup не прогонялась.\n\n## Линт\n').replaceAll('\n', '\r\n'));
+  const before = notes.map(path => readFileSync(join(f.root, path)));
+  const options = {BEERPOWERS_TESTS_JSON: JSON.stringify(checks)};
+  assert.doesNotMatch(f.setup('plan', undefined, options), /^(?:CREATE|UPDATE) memory\/commands\/.*-.*\.md$/m);
+  f.setup('apply', undefined, options);
+  const doctor = f.setup('doctor', undefined, {BEERPOWERS_TEST_SOURCE: undefined, BEERPOWERS_TEST_COMMAND: undefined});
+  for (const [index, path] of notes.entries()) {
+    assert.ok(doctor.includes(`Project OK: ${path}`));
+    assert.deepEqual(readFileSync(join(f.root, path)), before[index]);
+  }
+  assert.deepEqual(readdirSync(join(f.root, 'memory/commands')).sort(), products.map(name => name + '.md'));
+  assert.deepEqual(f.update().changes, []);
+});
+
+test('setup validates a legacy npm gate, its arguments and source without running it', t => {
+  const f = fixture(t);
+  const guide = 'memory/commands/api.md';
+  const manifest = 'projects/api/package.json';
+  const command = 'npm --prefix projects/api run build -- --mode production';
+  const options = {BEERPOWERS_TEST_COMMAND: 'npm run build -- --mode production', BEERPOWERS_TEST_SOURCE: 'package.json'};
+  const putGate = (...lines) => f.put(guide, '## Гейты\n\n' + lines.map(line => '- `' + line + '`\n').join(''));
+  f.put(manifest, JSON.stringify({scripts: {build: 'node -e "require(\'node:fs\').writeFileSync(\'gate-ran\', \'\')"'}}));
+  putGate(command);
+  f.setup('plan', undefined, options);
+  f.setup('apply', undefined, options);
+  assert.equal(f.has('projects/api/gate-ran'), false);
+  assert.equal(f.has('gate-ran'), false);
+  f.put(guide, f.read(guide) + '<!-- `' + command + '` -->\n');
+  f.setup('plan', undefined, options);
+  f.put(guide, '## Гейты\n\n<!-- `' + command + '` -->\n');
+  assert.throws(() => f.setup('plan', undefined, options), /memory\/commands\/api\.md: .*missing inline npm gate/);
+
+  for (const [lines, reason] of [
+    [[command.replace('projects/api', 'projects/other')], /--prefix.*projects\/other.*projects\/api/],
+    [[command.replace('production', 'development')], /command or arguments differ/],
+    [[command, command], /ambiguous.*npm/],
+    [[command + ' > first.log 2>&1; echo CODE=$? >> second.log'], /same log/],
+    [[command + '; echo unexpected'], /unsupported npm gate/],
+    [[command.replace(' -- --mode', ' --prefix projects/other -- --mode')], /unsupported npm gate/],
+  ]) {
+    putGate(...lines);
+    assert.throws(() => f.setup('plan', undefined, options), {message: new RegExp(guide + ': .*' + reason.source)});
+  }
+  putGate(command);
+  assert.throws(() => f.setup('plan', undefined, {...options, BEERPOWERS_TEST_SOURCE: 'README.md'}),
+    /memory\/commands\/api\.md: .*source.*package\.json/);
+  f.put(manifest, '{"scripts":{"build":1}}');
+  assert.throws(() => f.setup('plan', undefined, options), /memory\/commands\/api\.md: .*invalid scripts\.build.*package\.json/);
+  f.put(manifest, '{"scripts":{"dev":"nuxt"}}');
+  assert.throws(() => f.setup('plan', undefined, options), /memory\/commands\/api\.md: .*scripts\.build.*package\.json/);
+  assert.throws(() => f.setup('doctor', undefined, {BEERPOWERS_TEST_SOURCE: undefined, BEERPOWERS_TEST_COMMAND: undefined}),
+    /memory\/commands\/api\.md: .*scripts\.build.*package\.json/);
+});
+
+test('setup still validates an existing Codex command note', t => {
+  const f = fixture(t);
+  const path = 'memory/commands/api.md';
+  const guide = '# Команды — api\n\nКаталог запуска: `projects/api/`\nИсточник: `README.md`\n\n```text\ngit diff --check\n```\n';
+  f.put(path, guide);
+  f.setup('plan');
+  f.setup('apply');
+  assert.match(f.setup('doctor'), /^Project OK: memory\/commands\/api\.md$/m);
+  assert.equal(f.read(path), guide);
+  assert.throws(() => f.setup('plan', undefined, {BEERPOWERS_TEST_COMMAND: 'git diff --stat'}),
+    /memory\/commands\/api\.md: .*command or arguments differ/);
+  f.put(path, guide.replace('git diff', 'git\0 diff'));
+  assert.throws(() => f.update(), /memory\/commands\/api\.md: .*invalid single-line command/);
+});
 
 test('setup previews and seeds selected discovery notes, preserving manual memory on repeat', t => {
   const f = fixture(t);

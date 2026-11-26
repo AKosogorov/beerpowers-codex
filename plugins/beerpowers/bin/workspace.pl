@@ -110,6 +110,70 @@ sub source_exists {
     my ($product, $path) = @_;
     return defined($path) && length($path) && $path !~ /[\r\n\x60]/ && -f safe_path("$product/$path");
 }
+
+sub legacy_npm_gate {
+    my ($prose, $product) = @_;
+    my @sections = $prose =~ /^ {0,3}##[ \t]+Гейты[ \t]*\n(.*?)(?=^ {0,3}#{1,2}[ \t]|\z)/msg;
+    my @gates = grep { /\A[ \t]*npm(?:[ \t]|\z)/ }
+        ($sections[0] // '') =~ /(?<!\x60)\x60([^\x60\n]+)\x60(?!\x60)/g;
+    die "ambiguous npm gate in section Гейты\n" if @sections > 1 || @gates > 1;
+    die "missing inline npm gate in section Гейты\n" unless @gates;
+
+    # Разбираем только литералы и известную обёртку логирования.
+    my $word = qr{[-A-Za-z0-9_./:=+,@%]+};
+    my $log_path = qr{(?:$word|<[^<>\x60\r\n]+>)};
+    my ($invocation, $log, $status_log) = trim_cell($gates[0]) =~
+        /\A([^>]+?)(?:[ \t]*>[ \t]*($log_path)[ \t]+2>&1[ \t]*;[ \t]*echo[ \t]+CODE=\$\?[ \t]*>>[ \t]*($log_path))?\z/;
+    die "unsupported npm gate redirection\n" unless defined $invocation;
+    die "npm gate must write output and CODE to the same log\n" if defined($log) && $log ne $status_log;
+
+    my ($prefix, $script, $args) = trim_cell($invocation) =~
+        /\Anpm[ \t]+--prefix[ \t]+($word)[ \t]+run[ \t]+([A-Za-z0-9_][-A-Za-z0-9_.:]*)((?:[ \t]+$word)*)\z/;
+    die "unsupported npm gate; expected npm --prefix <product> run <script> [args]\n" unless defined $prefix;
+    die "npm --prefix points to $prefix, expected $product\n" unless $prefix =~ m{\A(?:\./)?\Q$product\E/?\z};
+    my @args = split ' ', $args;
+    for my $arg (@args) {
+        last if $arg eq '--';
+        die "unsupported npm gate option $arg before --\n" if $arg =~ /^-/;
+    }
+    return (join(' ', 'npm', 'run', $script, @args), $script);
+}
+
+sub validate_test_guide {
+    my ($doc, $product, $command, $source) = @_;
+    $doc =~ s/\r\n/\n/g;
+    $doc =~ s/\A\xef\xbb\xbf//;
+    my $prose = markdown_prose($doc);
+    $prose =~ s/<!--.*?(?:-->|\z)//gs;
+    my ($saved, $evidence, $script);
+    if ($prose =~ /^(?:Каталог запуска|Источник):/m) {
+        ($saved) = $doc =~ /^\x60{3}text\n([^\n]+)\n\x60{3}$/m;
+        ($evidence) = $doc =~ /^Источник: \x60([^\x60\n]+)\x60$/m;
+        die "expected launch directory $product/\n" unless $doc =~ /^Каталог запуска: \x60\Q$product\E\/\x60$/m;
+        die "missing or invalid single-line command in fenced text block\n"
+            unless defined($saved) && $saved =~ /\S/ && $saved !~ /[\r\n\x00]/;
+        die "missing source in Codex command note\n" unless defined $evidence;
+    } else {
+        ($saved, $script) = legacy_npm_gate($prose, $product);
+        $evidence = 'package.json';
+        $command = trim_cell($command) =~ s/[ \t]+/ /gr if defined $command;
+    }
+    die "source differs from setup input; expected $evidence, got $source\n" if defined($source) && $source ne $evidence;
+    die "command or arguments differ from setup input; expected $command, found $saved\n"
+        if defined($command) && $command ne $saved;
+    die "test source missing in $product: $evidence\n" unless source_exists($product, $evidence);
+    if (defined $script) {
+        my $manifest = eval { parse_json(read_file("$product/$evidence")) };
+        die "invalid JSON object in $product/$evidence\n" unless ref($manifest) eq 'HASH';
+        my $scripts = $manifest->{scripts};
+        my $definition = ref($scripts) eq 'HASH' ? $scripts->{$script} : undef;
+        die "missing scripts.$script in $product/$evidence\n" unless defined $definition;
+        die "invalid scripts.$script in $product/$evidence; expected a non-empty string\n"
+            unless !ref($definition) && $json->encode($definition) =~ /\A"/ && $definition =~ /\S/;
+    }
+    return ($saved, $evidence);
+}
+
 my $git_file = safe_path('.codex/git-settings.json');
 my $git_settings = -f $git_file ? eval { parse_json(read_file($git_file)) } :
     {standArchive => JSON::PP::false, removeSourceBranch => JSON::PP::true, repos => {}};
@@ -119,14 +183,16 @@ for my $key (qw(standArchive removeSourceBranch)) {
 }
 my %existing_profiles = %{$git_settings->{repos}};
 my %test_inputs;
-if (!$doctor && length($ENV{BEERPOWERS_TESTS_JSON} // '')) {
-    my $input = parse_json($ENV{BEERPOWERS_TESTS_JSON});
+my $checks_json = $doctor ? '' : ($ENV{BEERPOWERS_TESTS_JSON} // '');
+my $read_saved_checks = $doctor || ($machine_plan && !length($checks_json));
+if (length $checks_json) {
+    my $input = parse_json($checks_json);
     die "BEERPOWERS_TESTS_JSON must map every product to its command, source and profile\n"
         unless ref($input) eq 'HASH' && keys(%$input) == @repos;
     %test_inputs = %$input;
-} elsif (!$doctor && @repos == 1) {
+} elsif (!$read_saved_checks && @repos == 1) {
     $test_inputs{$repo} = {command => $command, source => $source};
-} elsif (!$doctor) {
+} elsif (!$read_saved_checks) {
     die "Set BEERPOWERS_TESTS_JSON with checks for every product: @repos\n";
 }
 for my $name (@repos) {
@@ -140,17 +206,30 @@ for my $name (@repos) {
     if ($doctor && !exists $existing_profiles{$name}) { push @errors, "$git_file: missing profile for $name" }
     $git_settings->{repos}{$name} = $profile;
     print "Product: $product\nProfile: $profile\n";
-    next if $doctor;
+    my $guide = safe_path("memory/commands/$name.md");
     my ($cmd, $src) = @{$params}{qw(command source)};
-    die "Expected non-empty test command for $name\n" unless defined($cmd) && !ref($cmd) && $cmd =~ /\S/ && $cmd !~ /[\r\n\x00]/;
-    die "Test source missing in $product\n" unless defined($src) && !ref($src);
-    # JSON::PP decodes JSON to characters. Existing Perl documents contain UTF-8 bytes.
-    if (length($ENV{BEERPOWERS_TESTS_JSON} // '')) {
-        ($cmd, $src) = map { encode('UTF-8', $_) } ($cmd, $src);
-        @{$params}{qw(command source)} = ($cmd, $src);
+    if (!$read_saved_checks) {
+        die "Expected non-empty test command for $name\n" unless defined($cmd) && !ref($cmd) && $cmd =~ /\S/ && $cmd !~ /[\r\n\x00]/;
+        die "$guide: Test source missing in $product\n" unless defined($src) && !ref($src) && length($src);
+        # JSON::PP decodes JSON to characters. Existing Perl documents contain UTF-8 bytes.
+        ($cmd, $src) = map { encode('UTF-8', $_) } ($cmd, $src) if length $checks_json;
     }
-    die "Test source missing in $product: $src\n" unless source_exists($product, $src);
-    print "Tests (cwd $product): $cmd\nSource: $src\n";
+    if (-f $guide) {
+        my $ok = eval { ($cmd, $src) = validate_test_guide(read_file($guide), $product, $cmd, $src); 1 };
+        unless ($ok) {
+            my $reason = $@;
+            chomp $reason;
+            push @errors, "$guide: $reason";
+            next;
+        }
+    } elsif ($read_saved_checks) {
+        push @errors, "$guide: expected a regular file";
+        next;
+    } else {
+        die "$guide: Test source missing in $product: $src\n" unless source_exists($product, $src);
+    }
+    @{$test_inputs{$name}}{qw(command source)} = ($cmd, $src);
+    print "Tests (cwd $product): $cmd\nSource: $src\n" unless $doctor;
 }
 
 # Existing documents belong to the project. Validate them and only seed missing files.
@@ -588,20 +667,14 @@ if ($shared_memory && !$doctor) {
         seed("memory/$relative", $body . ($memory_notes{$relative} // ''), sub {1});
     }
 }
-for my $name (@repos) {
+for my $name ($read_saved_checks ? () : @repos) {
+    my $path = "memory/commands/$name.md";
+    next if -f $path;
     my $product = "projects/$name";
     my ($command, $source) = @{$test_inputs{$name} // {}}{qw(command source)};
-    my $test_doc = $doctor ? '' : "# Команды — $name\n\n## Гейты\n\nПолный прогон тестов. При setup команда записана по источнику и не прогонялась.\n\nКаталог запуска: \x60$product/\x60\nИсточник: \x60$source\x60\n\n```text\n$command\n```\n";
+    my $test_doc = "# Команды — $name\n\n## Гейты\n\nПолный прогон тестов. При setup команда записана по источнику и не прогонялась.\n\nКаталог запуска: \x60$product/\x60\nИсточник: \x60$source\x60\n\n```text\n$command\n```\n";
     $test_doc .= $memory_notes{"commands/$name.md"} // '';
-    seed("memory/commands/$name.md", $test_doc, sub {
-    my $doc = shift;
-    $doc =~ s/\r\n/\n/g;
-    my ($saved) = $doc =~ /^\x60{3}text\n([^\n]+)\n\x60{3}$/m;
-    my ($evidence) = $doc =~ /^Источник: \x60([^\x60\n]+)\x60$/m;
-    return 0 unless defined $saved && $saved =~ /\S/ && source_exists($product, $evidence)
-        && $doc =~ /^Каталог запуска: \x60\Q$product\E\/\x60$/m;
-    return $doctor || ($saved eq $command && $evidence eq $source);
-    });
+    seed($path, $test_doc);
 }
 
 sub append_lines {
