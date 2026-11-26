@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Учебный каталог</title>
+<h1>Каталог книг</h1>
+<ul id="catalog"></ul>
+<form>
+  <label>Название книги <input name="title" required></label>
+  <button>Сохранить</button>
+</form>
+<p role="status"></p>
+<script type="module">
+  const list = document.querySelector('#catalog');
+  const response = await fetch('/api/books');
+  const { books } = await response.json();
+  for (const title of books.length ? books : ['Пока нет книг']) {
+    const item = document.createElement('li');
+    item.textContent = title;
+    list.append(item);
+  }
+  document.querySelector('form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const response = await fetch('/api/books', { method: 'POST', body: new FormData(event.target) });
+    document.querySelector('[role=status]').textContent = response.ok ? 'Сохранено' : 'Ошибка';
+  });
+</script>
+</html>

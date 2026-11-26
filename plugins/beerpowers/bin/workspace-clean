@@ -1,0 +1,357 @@
+#!/usr/bin/env node
+// Планирует и выполняет уборку только известных категорий артефактов workspace.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { cleanupName, cleanupTaskCode, cleanupInventory, hasBareGitLayout } from './lib/cleanup-paths.mjs';
+
+const usage = `Использование из корня workspace
+  node <пакет>/bin/workspace-clean worktree <код> [--orphan] [--merged-anyway]
+  node <пакет>/bin/workspace-clean orphans
+  node <пакет>/bin/workspace-clean output [<код> | <репозиторий>]
+  node <пакет>/bin/workspace-clean task <код>
+  node <пакет>/bin/workspace-clean cache
+
+Без --apply команда показывает план. Уборка кеша входит в каждый вызов,
+если не передан --no-cache. Срок хранения задаёт --keep-days (по умолчанию 7).
+Для проверки согласованного плана зарегистрированных worktree передай --apply --confirm <planHash>.`;
+
+const worktreeRoot = 'worktrees';
+const taskRoot = 'memory/tasks';
+const cache = '.codex/.cache';
+const runs = cache + '/parallel-tests/runs';
+const sessions = cache + '/screenshots-reminder';
+const mutants = cache + '/mutants';
+const media = ['figma', 'screenshots', 'tracker/task-attachment'];
+const pathKey = value => process.platform === 'win32' ? value.toLowerCase() : value;
+const say = message => process.stdout.write(message + '\n');
+const fail = message => { throw new Error(message); };
+const retained = (rel, reason) => say(`не трогаю: ${rel} — ${reason}`);
+
+function parse() {
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: {
+    help: { type: 'boolean', short: 'h' }, apply: { type: 'boolean' }, 'dry-run': { type: 'boolean' },
+    'no-cache': { type: 'boolean' }, 'keep-days': { type: 'string' },
+    'orphan': { type: 'boolean' }, 'merged-anyway': { type: 'boolean' }, confirm: { type: 'string' },
+  } });
+  if (values.help) { say(usage); return; }
+  const [mode, target, ...rest] = positionals;
+  if (!['worktree', 'orphans', 'output', 'task', 'cache'].includes(mode) || rest.length) fail(usage);
+  if (values.apply && values['dry-run']) fail('--apply и --dry-run несовместимы');
+  if ((values.orphan || values['merged-anyway']) && mode !== 'worktree') fail('--orphan и --merged-anyway относятся к worktree');
+  if (values.confirm !== undefined && (mode !== 'worktree' || !values.apply || !/^[a-f0-9]{64}$/.test(values.confirm))) {
+    fail('--confirm принимает planHash только вместе с worktree --apply');
+  }
+  if (target !== undefined && ['cache', 'orphans'].includes(mode)) fail(`у ${mode} нет цели`);
+  if (['task', 'worktree'].includes(mode) && !target) fail(`нужен код задачи для ${mode}`);
+  if (target !== undefined && !cleanupTaskCode(target)) fail(`недопустимый код задачи или имя репозитория «${target}»`);
+  const days = values['keep-days'] ?? '7';
+  if (!/^\d+$/.test(days) || !Number.isSafeInteger(Number(days))) fail('--keep-days: ждётся целое число дней');
+  if (values['no-cache'] && (mode === 'cache' || values['keep-days'] !== undefined)) {
+    fail('--no-cache выключает уборку кеша и несовместим с cache или --keep-days');
+  }
+  return { mode, target, apply: Boolean(values.apply), noCache: Boolean(values['no-cache']), days: Number(days),
+    orphan: Boolean(values.orphan), force: Boolean(values['merged-anyway']), confirmed: values.confirm };
+}
+
+async function main() {
+  const options = parse();
+  if (!options) return;
+  if (process.env.WORKSPACE_ROOT) process.chdir(process.env.WORKSPACE_ROOT);
+  const { root, safe, git, worktrees, readJson } = await import('./lib/git-repositories.mjs');
+  const { runProjectHook } = await import('./lib/project-worktree-hooks.mjs');
+  const { mode, target, apply, noCache, days, orphan, force, confirmed } = options;
+  const exists = rel => fs.lstatSync(safe(rel), { throwIfNoEntry: false });
+  const directory = rel => exists(rel)?.isDirectory();
+  const entries = rel => directory(rel) ? fs.readdirSync(safe(rel), { withFileTypes: true }) : [];
+  const sayRemoval = rel => say(`${apply ? 'удалено' : 'удалил бы'}: ${rel}`);
+  const exactRoot = cwd => !path.relative(cwd, fs.realpathSync.native(git(cwd, ['rev-parse', '--show-toplevel'])));
+
+  if (!exists('.git') || !exactRoot(root)) fail('открой корень внешнего Git workspace');
+  const configPath = '.codex/workspace.json';
+  const config = exists(configPath)?.isFile() ? readJson(configPath, {}) : {};
+  const version = typeof config.beerpowers === 'string' && /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/.test(config.beerpowers);
+  const current = config.schemaVersion === 1;
+  const legacy = config.beerpowers === '0.2.0' && Object.keys(config).length === 1;
+  if (!version || (!current && !legacy)) fail(`в ${configPath} нет совместимого штампа BeerPowers`);
+
+  function assertUntracked(rel, checkout = '') {
+    const within = checkout ? rel.slice(checkout.length + 1) : rel;
+    const tracked = git(checkout ? safe(checkout) : root, ['--literal-pathspecs', 'ls-files', '-z', '--', within]);
+    if (tracked) fail(`в ${rel} есть файлы под Git:\n${tracked.split('\0').filter(Boolean).slice(0, 10).join('\n')}`);
+  }
+
+  const bareGit = rel => hasBareGitLayout(fs.readdirSync(safe(rel)));
+  function assertOwnership(rel, checkout = '') {
+    for (let parent = path.posix.dirname(rel); parent !== '.'; parent = path.posix.dirname(parent)) {
+      if (parent !== checkout && (exists(parent + '/.git') || bareGit(parent))) {
+        fail(`вложенный Git-репозиторий ${parent} защищает ${rel}`);
+      }
+    }
+  }
+
+  const inventory = (rel, options) => cleanupInventory(safe(rel), rel, options);
+
+  function removal(rel, checkout = '', precondition = () => true) {
+    const check = () => {
+      assertOwnership(rel, checkout);
+      assertUntracked(rel);
+      if (checkout) assertUntracked(rel, checkout);
+      return inventory(rel);
+    };
+    const files = check();
+    return { rel, files, run() {
+      if (apply) {
+        if (!precondition() || !directory(rel)) { retained(rel, 'состояние изменилось'); return false; }
+        check();
+        const abs = safe(rel);
+        const real = fs.realpathSync.native(abs);
+        const within = path.relative(root, real);
+        if (pathKey(real) !== pathKey(abs) || !within || within === '..' || within.startsWith('..' + path.sep) || path.isAbsolute(within)) {
+          fail(`путь выходит за границы workspace: ${rel}`);
+        }
+        fs.rmSync(abs, { recursive: true });
+      }
+      sayRemoval(rel);
+      return true;
+    } };
+  }
+
+  function emptyContainer(rel, removed) {
+    const hasFiles = current => entries(current).some(entry => {
+      const child = `${current}/${entry.name}`;
+      return !removed.has(child) && (entry.name.toLowerCase() === '.git' || !entry.isDirectory() ||
+        entry.isSymbolicLink() || hasFiles(child));
+    });
+    if (!directory(rel)) return;
+    if (hasFiles(rel)) return retained(rel, 'остались файлы');
+    if (apply) {
+      const removeEmpty = current => {
+        for (const entry of entries(current)) {
+          if (entry.isDirectory() && !entry.isSymbolicLink() && entry.name.toLowerCase() !== '.git') {
+            removeEmpty(`${current}/${entry.name}`);
+          }
+        }
+        try { fs.rmdirSync(safe(current)); }
+        catch (error) { if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error; }
+      };
+      removeEmpty(rel);
+      if (directory(rel)) return retained(rel, 'остались файлы');
+    }
+    sayRemoval(rel + ' (пустой каталог)');
+  }
+
+  function child(script, args) {
+    const file = fileURLToPath(new URL(script, import.meta.url));
+    const result = spawnSync(process.execPath, [file, ...args], {
+      cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true,
+    });
+    if (result.error || result.status !== 0) fail(result.stderr.trim() || result.error?.message || `ошибка ${script}`);
+    return result.stdout.trimEnd();
+  }
+
+  const repos = ['worktree', 'orphans', 'output'].includes(mode) ? entries('projects').flatMap(entry => {
+    const rel = 'projects/' + entry.name;
+    return entry.isDirectory() && !entry.isSymbolicLink() && cleanupName(entry.name) && exists(rel + '/.git') && exactRoot(safe(rel))
+      ? [{ name: entry.name, path: rel }] : [];
+  }) : [];
+  const names = new Set(repos.map(repo => repo.name));
+  let registered;
+  const registrations = () => registered ??= new Set(repos.flatMap(repo => worktrees(repo).map(entry => pathKey(entry.checkout))));
+  const registeredAt = rel => registrations().has(pathKey(rel));
+
+  function scopedCheckouts(code) {
+    const scope = `${worktreeRoot}/${code}`;
+    if (!directory(scope)) fail(`каталога ${scope} нет`);
+    return repos.map(repo => `${scope}/${repo.name}`).filter(directory);
+  }
+
+  function allCheckouts(rel = worktreeRoot) {
+    return entries(rel).flatMap(entry => {
+      const next = `${rel}/${entry.name}`;
+      if (entry.isSymbolicLink()) { retained(next, 'ссылка или junction'); return []; }
+      if (!entry.isDirectory() || !cleanupName(entry.name)) return [];
+      const known = rel !== worktreeRoot && names.has(entry.name);
+      if (registeredAt(next) || exists(next + '/.git') || bareGit(next)) {
+        if (!known && mode === 'orphans') retained(next, 'регистрация worktree или Git-репозиторий');
+        return known ? [next] : [];
+      }
+      if (known && fs.lstatSync(path.join(safe(next), '.output'), { throwIfNoEntry: false })?.isDirectory()) return [next];
+      const nested = allCheckouts(next);
+      return nested.length ? nested : known ? [next] : [];
+    });
+  }
+
+  function orphanRemoval(rel) {
+    if (registeredAt(rel) || exists(rel + '/.git')) {
+      if (mode === 'orphans') retained(rel, 'регистрация worktree или Git-репозиторий');
+      return;
+    }
+    try {
+      return removal(rel, '', () => {
+        registered = undefined;
+        return !registeredAt(rel) && !exists(rel + '/.git');
+      });
+    } catch (error) {
+      if (mode === 'worktree') throw error;
+      retained(rel, error.message);
+    }
+  }
+
+  function cleanWorktree() {
+    const dirs = scopedCheckouts(target);
+    if (!dirs.length) fail(`в ${worktreeRoot}/${target} нет каталогов репозиториев workspace`);
+    const unregistered = dirs.filter(rel => !registeredAt(rel));
+    const leftovers = unregistered.map(rel => {
+      if (!orphan) fail(`${rel} осиротел. Для уборки явно передай --orphan`);
+      if (allCheckouts(rel).length) fail(`в ${rel} находятся другие рабочие деревья`);
+      return orphanRemoval(rel) ?? fail(`${rel} содержит Git-метаданные вне регистрации продукта`);
+    });
+    const registered = dirs.filter(registeredAt);
+    if (confirmed && (leftovers.length || !registered.length)) fail('состав worktree изменился после предварительного плана');
+    for (const rel of registered) {
+      assertOwnership(rel);
+      assertUntracked(rel);
+      inventory(rel, { gitFile: true });
+    }
+    const gone = new Set(dirs);
+    const args = ['worktrees-clear', target, '--workspace-clean', ...(force ? ['--force'] : []),
+      ...(apply && !confirmed ? ['--refresh-evidence'] : [])];
+    const plan = registered.length ? JSON.parse(child('./git-workspace.mjs', args)) : null;
+    if (plan) {
+      const byPath = new Map(plan.candidates.map(candidate => [candidate.checkout, candidate]));
+      for (const rel of registered) {
+        const candidate = byPath.get(rel);
+        if (!candidate?.eligible) fail(`${rel}: ${candidate?.status || candidate?.reason || 'влитость вершины не подтверждена'}`);
+        say(`${rel}: HEAD ${candidate.head}, ${candidate.target ? `цель ${candidate.target}` : 'ветка сохраняется'}${candidate.by ? `, ${candidate.by}` : ''}`);
+        if (candidate.unpublished?.length) {
+          say(`коммиты вне ${candidate.unpublishedAgainst}: ${candidate.unpublished.join(', ')}`);
+        } else if (candidate.unpublishedReason) say(`публикация вершины не подтверждена: ${candidate.unpublishedReason}`);
+      }
+    }
+    if (apply) {
+      for (const rel of unregistered) runProjectHook('teardown', target, path.posix.basename(rel), rel);
+      if (plan) {
+        const result = JSON.parse(child('./git-workspace.mjs', [...args, '--apply', '--confirm', confirmed ?? plan.planHash]));
+        for (const rel of registered) if (!result.removed.includes(rel)) fail(`Git не удалил ${rel}`);
+      }
+    } else {
+      for (const rel of dirs) {
+        const item = runProjectHook('teardown', target, path.posix.basename(rel), rel, { preview: true });
+        if (item) say(`вызвал бы: ${item.hook} для ${rel}${item.output ? '\n' + item.output : ''}`);
+      }
+      if (plan && !leftovers.length) say(`planHash: ${plan.planHash}`);
+    }
+    for (const rel of registered) sayRemoval(rel);
+    leftovers.forEach(item => item.run());
+    emptyContainer(`${worktreeRoot}/${target}`, gone);
+  }
+
+  function cleanOutput() {
+    const scope = target && directory(`${worktreeRoot}/${target}`) ? 'task' : target ? 'product' : 'all';
+    if (scope === 'product' && !names.has(target)) fail(`нет задачи или репозитория «${target}»`);
+    const products = scope === 'task' ? [] : repos.filter(repo => !target || repo.name === target).map(repo => repo.path);
+    const trees = scope === 'product' ? [] : scope === 'task' ? scopedCheckouts(target) : allCheckouts();
+    const plan = [...products, ...trees].flatMap(checkout => {
+      const rel = `${checkout}/.output`;
+      if (!directory(rel)) return [];
+      const repo = exists(checkout + '/.git') ? checkout : '';
+      if ((repo && !exactRoot(safe(repo))) || (registeredAt(checkout) && !repo)) fail(`Git не распознал ${checkout}`);
+      return [removal(rel, repo)];
+    });
+    plan.forEach(item => item.run());
+    if (!plan.length) say('каталогов .output нет');
+  }
+
+  function cleanTask() {
+    const rel = `${taskRoot}/${target}`;
+    if (!directory(rel)) fail(`каталога ${rel} нет`);
+    const plan = media.map(name => `${rel}/${name}`).filter(directory).map(name => removal(name));
+    for (const item of plan) {
+      say(`${item.rel}: файлов ${item.files}`);
+      item.run();
+    }
+    if (!plan.length) say(`в ${rel} нет каталогов медиа`);
+    emptyContainer(rel, new Set(plan.map(item => item.rel)));
+  }
+
+  function live(pid) {
+    try { process.kill(pid, 0); return true; }
+    catch (error) { return error.code !== 'ESRCH'; }
+  }
+
+  function planCache() {
+    if (noCache || !directory(cache)) return;
+    const cutoff = Date.now() - days * 86_400_000;
+    const runPlan = [], sessionPlan = [];
+    const report = [];
+    let liveRuns = 0, freshRuns = 0;
+    for (const [rel, plan] of [[runs, runPlan], [sessions, sessionPlan]]) {
+      for (const entry of entries(rel)) {
+        const dir = `${rel}/${entry.name}`;
+        if (entry.isSymbolicLink()) { report.push(() => retained(dir, 'ссылка или junction')); continue; }
+        if (!entry.isDirectory()) continue;
+        if (exists(dir).mtimeMs >= cutoff) { if (rel === runs) freshRuns++; continue; }
+        const pid = rel === runs ? Number(/^\d{8}-\d{6}-([1-9]\d*)$/.exec(entry.name)?.[1]) : null;
+        if ((pid !== null && (!Number.isInteger(pid) || pid > 2147483647)) || !cleanupName(entry.name)) {
+          report.push(() => retained(dir, 'незнакомый формат имени')); continue;
+        }
+        if (pid && live(pid)) { liveRuns++; report.push(() => say(`идёт: ${dir} — pid ${pid} жив`)); continue; }
+        plan.push(removal(dir, '', () => exists(dir)?.mtimeMs < cutoff && (!pid || !live(pid))));
+      }
+    }
+    const copies = entries(mutants);
+    if (copies.length) {
+      assertUntracked(mutants);
+      for (const entry of copies.filter(entry => /^([A-Za-z0-9_][A-Za-z0-9_.-]*)-s[1-9]\d*$/.test(entry.name))) {
+        const rel = `${mutants}/${entry.name}`;
+        if (!directory(rel)) fail(`ожидался каталог копии мутанта: ${rel}`);
+        assertOwnership(rel);
+        inventory(rel, { gitFile: true, links: true });
+      }
+    }
+    return () => {
+      if (mode !== 'cache') say(`кеш ${cache} (--no-cache выключает уборку)`);
+      let removedCopies = 0, busyCopies = 0;
+      if (copies.length) {
+        const output = child('./mutants.mjs', ['--clean', ...(apply ? [] : ['--dry-run'])]);
+        for (const line of output.split('\n')) {
+          const match = /^(убрана|убрал бы|занята): (.+)$/.exec(line);
+          if (match?.[1] === 'занята') { busyCopies++; say(`занята: ${mutants}/${match[2]}`); }
+          else if (match) { removedCopies++; sayRemoval(`${mutants}/${match[2]}`); }
+        }
+      }
+      report.forEach(print => print());
+      const removedRuns = runPlan.filter(item => item.run()).length;
+      const removedSessions = sessionPlan.filter(item => item.run()).length;
+      if (entries(cache + '/parallel-tests').some(entry => entry.name.endsWith('.junit.xml'))) {
+        retained(cache + '/parallel-tests/*.junit.xml', 'длительности тестов для раскладки');
+      }
+      const retainedState = new Set(['comment-guard', 'push-lost', 'user-files-window', 'task-start', 'tracker']);
+      for (const entry of entries(cache)) {
+        if (['mutants', 'parallel-tests', 'screenshots-reminder'].includes(entry.name)) continue;
+        retained(`${cache}/${entry.name}`, retainedState.has(entry.name) ? 'состояние барьеров и команд' : 'посторонний путь');
+      }
+      const verb = apply ? 'убрано' : 'убрал бы';
+      say(`итог: копий мутантов ${verb} ${removedCopies} (заняты: ${busyCopies}), прогонов тестов ${verb} ${removedRuns}` +
+        ` (идут: ${liveRuns}, моложе ${days} дн.: ${freshRuns}), каталогов состояния ${verb} ${removedSessions}`);
+    };
+  }
+
+  const cleanCache = planCache();
+  if (mode === 'worktree') cleanWorktree();
+  if (mode === 'orphans') {
+    const plan = allCheckouts().map(orphanRemoval).filter(Boolean);
+    plan.forEach(item => item.run());
+    if (!plan.length) say('осиротевших каталогов для уборки нет');
+  }
+  if (mode === 'output') cleanOutput();
+  if (mode === 'task') cleanTask();
+  if (cleanCache) cleanCache();
+  else if (mode === 'cache') say(`каталога ${cache} нет`);
+  if (!apply) say('сухой прогон. Для удаления повтори вызов с --apply');
+}
+
+main().catch(error => { process.stderr.write(`workspace-clean: ${error.message}\n`); process.exitCode = 1; });

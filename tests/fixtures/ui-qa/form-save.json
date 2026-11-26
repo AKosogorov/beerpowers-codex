@@ -1,0 +1,35 @@
+{
+  "scenarios": [
+    {
+      "name": "save-blocked", "width": 390, "height": 844, "mobile": true,
+      "steps": [
+        { "goto": "/" },
+        { "wait": { "selector": "#catalog li" } },
+        { "click": "button" },
+        { "wait": { "expr": "document.activeElement.name === 'title'" } }
+      ],
+      "state": { "missing": "document.querySelector('input').validity.valueMissing" }
+    },
+    {
+      "name": "save-ok", "width": 1280, "height": 800,
+      "steps": [
+        { "goto": "/" },
+        { "wait": { "selector": "#catalog li", "hasText": "Азбука" } },
+        { "type": "input", "text": "Учебный атлас" },
+        { "click": "button" },
+        { "wait": { "selector": "[role=status]", "hasText": "Сохранено" } },
+        { "screenshot": "tester-save-{width}.png" }
+      ],
+      "state": { "status": "document.querySelector('[role=status]').textContent" }
+    },
+    {
+      "name": "empty-list", "width": 390, "height": 844, "mobile": true,
+      "mocks": [{ "url": "*/api/books", "method": "GET", "json": { "books": [] } }],
+      "steps": [
+        { "goto": "/" },
+        { "wait": { "selector": "#catalog li", "hasText": "Пока нет книг" } }
+      ],
+      "state": { "items": "[...document.querySelectorAll('#catalog li')].map(item => item.textContent)" }
+    }
+  ]
+}

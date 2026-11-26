@@ -4,133 +4,36 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
+  codex:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0   # check_migrations.py сравнивает с базой; обрезанная история его ломает
-
-      - name: JSON-манифесты валидны
+          node-version: '24'
+      - name: Проверить релизные заметки текущей версии
+        shell: bash
         run: |
-          python3 -m json.tool .claude-plugin/marketplace.json > /dev/null
-          python3 -m json.tool plugins/beerpowers/.claude-plugin/plugin.json > /dev/null
-          python3 -m json.tool plugins/beerpowers/hooks/hooks.json > /dev/null
-          python3 -m json.tool examples/laravel-nuxt/.claude/settings.json > /dev/null
-
-      - name: Канон рантайма — call-синтаксис упразднённых примитивов запрещён (plugins/ + examples/)
+          version=$(node -p "require('./plugins/beerpowers/.codex-plugin/plugin.json').version")
+          node .github/scripts/release_notes.mjs "$version" > /dev/null
+      - name: Проверить наличие браузера на Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          if grep -rnE 'TeamCreate\(|TeamDelete\(|team_name\s*:' plugins/ examples/; then
-            echo 'Найден call-синтаксис упразднённых примитивов (TeamCreate(/TeamDelete(/team_name:)' >&2
-            exit 1
-          fi
-          echo 'OK: call-синтаксис упразднённых примитивов не встречается'
-
-      - name: Hook-скрипты синтаксически валидны (sh на Linux = dash)
-        run: |
-          found=0
-          for f in $(find plugins/beerpowers -name '*.sh' | sort); do
-            sh -n "$f" || exit 1
-            found=$((found + 1))
-          done
-          if [ "$found" -eq 0 ]; then
-            echo 'Не найдено ни одного .sh — проверка молча деградировала' >&2
-            exit 1
-          fi
-          echo "OK: $found hook-скрипт(ов) синтаксически валидны"
-
-      - name: Скрипты templates/bin синтаксически валидны (по shebang)
-        run: |
-          found=0
-          for f in $(find plugins/beerpowers/templates/bin -type f ! -name '*.mk' | sort); do
-            case "$(head -n 1 "$f")" in
-              *node*) node --check "$f" || exit 1 ;;
-              *bash*) bash -n "$f" || exit 1 ;;
-              *sh*) sh -n "$f" || exit 1 ;;
-              *) echo "$f: нет shebang — копия не запустится литеральным путём" >&2; exit 1 ;;
-            esac
-            found=$((found + 1))
-          done
-          if [ "$found" -eq 0 ]; then
-            echo 'В templates/bin не найдено ни одного скрипта — проверка молча деградировала' >&2
-            exit 1
-          fi
-          echo "OK: $found скрипт(ов) templates/bin синтаксически валидны"
-
-      - name: Плейсхолдеры шаблонов из белого списка
-        run: python3 .github/scripts/check_placeholders.py
-
-      - name: Шаблоны без литералов проекта, engine-блоки по контракту
-        run: python3 .github/scripts/check_templates.py
-
-      - name: Барьеры-хуки — фикстуры решений
-        run: sh plugins/beerpowers/tests/hooks/run.sh
-
-      - name: screenshots-reminder — фикстуры старта и остановки роли
-        run: sh plugins/beerpowers/tests/hooks/screenshots-reminder.test.sh
-
-      - name: guard-user-files — окно команды и записи в нём
-        run: sh plugins/beerpowers/tests/hooks/guard-user-files.test.sh
-
-      - name: Git-логика скриптов — профили, база задачи, влитость, стенд
-        run: sh plugins/beerpowers/tests/bin/git.test.sh
-
-      - name: layout-check — правка без вёрстки против классов, шаблона, текста и стилей
-        run: sh plugins/beerpowers/tests/bin/layout-check.test.sh
-
-      - name: Скрипты templates/bin отвечают на --help
-        run: sh plugins/beerpowers/tests/bin/help.test.sh
-
-      - name: yandex-tracker — источники доступа и тип организации, curl-заглушка
-        run: sh plugins/beerpowers/tests/bin/yandex-tracker.test.sh
-
-      - name: yandex-tracker-write — черновик против шаблона, запись против заглушки API
-        run: sh plugins/beerpowers/tests/bin/yandex-tracker-write.test.sh
-
-      - name: workspace-check — файлы, которые создают команды плагина позже, не битые ссылки
-        run: sh plugins/beerpowers/tests/bin/workspace-check.test.sh
-
-      - name: parallel-tests — раскладка, слоты машины, подстановки, native, итоговые строки
-        run: sh plugins/beerpowers/tests/bin/parallel-tests.test.sh
-
-      - name: mutants — применение и откат, одно вхождение, кеш по хешу, нулевой мутант, два потока
-        run: sh plugins/beerpowers/tests/bin/mutants.test.sh
-
-      - name: workspace-clean cache — копии мутантов, прогоны тестов, состояние хуков; занятое и чужое не трогается
-        run: sh plugins/beerpowers/tests/bin/workspace-clean.test.sh
-
-      - name: cdp-run — сценарии на учебном сайте, падения, подмена ответов, отказ на файле сценариев
-        run: sh plugins/beerpowers/tests/bin/cdp-run.test.sh
-
-      - name: token-audit — разрез роль × модель на фикстуре логов
-        run: sh plugins/beerpowers/tests/bin/token-audit.test.sh
-
-      - name: Workflow-скрипты синтаксически валидны
-        run: node .github/scripts/check_workflows.mjs plugins/beerpowers/workflows/*.mjs
-
-      - name: Относительные ссылки в plugins/ не биты
-        run: python3 .github/scripts/check_links.py
-
-      - name: Golden-эталон семантически валиден
-        run: |
-          node .github/scripts/sync_golden.mjs --check
-          python3 .github/scripts/check_golden.py
-
-      - name: Ссылки на скилы резолвятся, имена совпадают с каталогами
-        run: python3 .github/scripts/check_skill_refs.py
-
-      - name: Имена engine-блоков в реестре миграций есть в шаблонах
-        run: python3 .github/scripts/check_migration_blocks.py
-
-      - name: Правка сгенерированного несёт запись в реестр миграций
-        env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          base="$BASE_SHA"
-          # Первый push в ветку отдаёт нулевой sha в github.event.before — откатываемся на предыдущий коммит.
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            base=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
-          fi
-          CHECK_MIGRATIONS_BASE="$base" python3 .github/scripts/check_migrations.py
+          $browser = & node plugins/beerpowers/bin/cdp-screenshot.mjs --find-chrome
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $browser -PathType Leaf)) {
+            throw 'Installed Chrome/Chromium/Edge unavailable to the CDP adapter.'
+          }
+          Write-Host $browser
+      - name: Пакет Codex, миграции и локальные сценарии
+        run: node .github/scripts/validate_codex.mjs

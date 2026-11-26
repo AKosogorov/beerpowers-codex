@@ -4,9 +4,7 @@
 
 <https://github.com/toiiia/qtim-agent-team>
 
-Плагин `beerpowers` — форк плагина `qtim` 1.14.0 (коммит `4f51e09`): движок команды, команды,
-reference, скилы, Workflow-скрипты, CI и golden-эталон унаследованы и переработаны. Copyright
-и permission notice апстрима — в [`LICENSE`](LICENSE), первая строка copyright.
+BeerPowers для Codex основан на [BeerPowers v2.20.0](https://github.com/AKosogorov/beerpowers/tree/7c5bb1221d65b5c46c8af96fe7bc4ce979fc596e), который вырос из плагина `qtim` 1.14.0 (коммит `4f51e09`). Движок команды, команды, справочные материалы и навыки унаследованы и переработаны. Copyright и permission notice апстрима сохранены в [`LICENSE`](LICENSE).
 
 ## Скилы, адаптированные апстримом
 
@@ -19,9 +17,9 @@ reference, скилы, Workflow-скрипты, CI и golden-эталон уна
 
 <https://github.com/mattpocock/skills>
 
-Производные: `plugins/beerpowers/skills/debug-loop/` (из `diagnosing-bugs`),
-`plugins/beerpowers/skills/prototype/` (из `prototype`),
-`plugins/beerpowers/skills/grill/` (из `grilling` / `grill-me`).
+Производные: [`debug-loop`](plugins/beerpowers/skills/debug-loop/SKILL.md) из `diagnosing-bugs`,
+[`prototype`](plugins/beerpowers/skills/prototype/SKILL.md) из `prototype` и
+[`grill`](plugins/beerpowers/skills/grill/SKILL.md) из `grilling` / `grill-me`.
 
 ```
 MIT License
@@ -51,7 +49,7 @@ SOFTWARE.
 
 <https://github.com/DietrichGebert/ponytail>
 
-Производное: `plugins/beerpowers/skills/minimal-diff/` (из `ponytail`).
+Производное: [`minimal-diff`](plugins/beerpowers/skills/minimal-diff/SKILL.md) из `ponytail`.
 
 ```
 MIT License

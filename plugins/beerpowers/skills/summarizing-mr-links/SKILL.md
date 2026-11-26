@@ -1,7 +1,6 @@
 ---
 name: summarizing-mr-links
-description: Use when one or more merge requests or pull requests have just been created and the reply to the user is about to end
-user-invocable: false
+description: "Применяй, когда в ходе работы создали один или несколько merge request или pull request и нужно завершить ответ сводкой ссылок для пользователя."
 ---
 
 # Сводка ссылок после MR

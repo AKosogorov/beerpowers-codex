@@ -1,0 +1,20 @@
+{
+  "name": "akosogorov-codex",
+  "interface": {
+    "displayName": "AKosogorov · Codex"
+  },
+  "plugins": [
+    {
+      "name": "beerpowers-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/beerpowers"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

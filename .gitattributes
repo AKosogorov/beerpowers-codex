@@ -1,0 +1,3 @@
+/plugins/beerpowers/bin/make-shim text eol=lf
+/plugins/beerpowers/bin/workspace-clean text eol=lf
+/plugins/beerpowers/bin/lib/make-shim.mk text eol=lf
