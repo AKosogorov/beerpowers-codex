@@ -1,31 +1,45 @@
 name: release
 
-# Релиз на GitHub — на каждую новую version в plugin.json: тег v<версия> на коммите push'а,
-# заголовок «beerpowers <версия>», описание — раздел версии из CHANGELOG.md. Версия, у которой
-# релиз уже есть, пропускается: правки без бампа релиз не трогают.
-
 on:
   push:
     branches: [main]
-    paths: [plugins/beerpowers/.claude-plugin/plugin.json]
+    paths: ['plugins/beerpowers/.codex-plugin/plugin.json']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+
   release:
+    needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
-
-      - name: Релиз версии из plugin.json, если его ещё нет
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Выпустить версию манифеста Codex
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          v=$(node -p "require('./plugins/beerpowers/.claude-plugin/plugin.json').version")
-          if gh release view "v$v" > /dev/null 2>&1; then
-            echo "релиз v$v уже есть"
+          version=$(node -p "require('./plugins/beerpowers/.codex-plugin/plugin.json').version")
+          tag="v$version"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "GitHub Release $tag уже существует."
             exit 0
           fi
-          node .github/scripts/release_notes.mjs "$v" > "$RUNNER_TEMP/notes.md"
-          gh release create "v$v" --target "$GITHUB_SHA" --title "beerpowers $v" --notes-file "$RUNNER_TEMP/notes.md"
+          ref="refs/tags/$tag"
+          refs=$(git ls-remote --tags origin "$ref" "$ref^{}")
+          target=$(awk -v ref="$ref" '$2 == ref { sha = $1 } $2 == ref "^{}" { peeled = $1 } END { print (peeled ? peeled : sha) }' <<< "$refs")
+          if [[ -n "$target" && "$target" != "$GITHUB_SHA" ]]; then
+            echo "Тег $tag уже указывает на другой коммит." >&2
+            exit 1
+          fi
+          notes="$RUNNER_TEMP/beerpowers-release-notes.md"
+          node .github/scripts/release_notes.mjs "$version" > "$notes"
+          gh release create "$tag" --target "$GITHUB_SHA" --title "beerpowers-codex $version" --notes-file "$notes"

@@ -1,0 +1,63 @@
+#!/usr/bin/env node
+// Находит установленный Chromium и задаёт User-Agent для мобильной эмуляции.
+// Где Chrome на этой машине и мобильный User-Agent — общее у cdp-screenshot.mjs и cdp-run.mjs.
+// Путь ищется так: BEERPOWERS_CHROME (личный, из окружения пользователя) →
+// стандартные места установки Chrome, затем Chromium и Edge под текущую ОС.
+import { statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+function chromeCandidates() {
+  const env = process.env
+  if (process.platform === 'win32') {
+    const roots = [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA].filter(Boolean)
+    return [
+      ...roots.map(r => join(r, 'Google', 'Chrome', 'Application', 'chrome.exe')),
+      ...roots.map(r => join(r, 'Chromium', 'Application', 'chrome.exe')),
+      ...roots.map(r => join(r, 'Microsoft', 'Edge', 'Application', 'msedge.exe')),
+    ]
+  }
+  if (process.platform === 'darwin') {
+    return ['/Applications', join(homedir(), 'Applications')].flatMap(r => [
+      join(r, 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+      join(r, 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+      join(r, 'Microsoft Edge.app', 'Contents', 'MacOS', 'Microsoft Edge'),
+    ])
+  }
+  const found = []
+  for (const name of ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge']) {
+    try { found.push(execFileSync('which', [name], { encoding: 'utf8' }).trim()) } catch { /* нет в PATH */ }
+  }
+  return found
+}
+
+export function findChrome() {
+  const executableFile = file => {
+    try { return statSync(file).isFile() } catch { return false }
+  }
+  const own = process.env.BEERPOWERS_CHROME
+  if (own) {
+    if (executableFile(own)) return { path: own, tried: [own] }
+    return { path: null, tried: [`${own} (BEERPOWERS_CHROME — файла нет)`] }
+  }
+  const tried = chromeCandidates()
+  return { path: tried.find(p => p && executableFile(p)) ?? null, tried }
+}
+
+// Мобильная эмуляция без мобильного User-Agent неполна: сайты выбирают вёрстку по
+// navigator.userAgent и Client Hints (@nuxtjs/device и подобные), а не по ширине вьюпорта.
+// Возвращает параметры Emulation.setUserAgentOverride: UA того же Chrome, платформа Android,
+// пометка Mobile.
+export function mobileUserAgent(userAgent) {
+  const full = userAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? '0.0.0.0'
+  const major = full.split('.')[0]
+  return {
+    userAgent: userAgent.replace(/\([^)]*\)/, '(Linux; Android 10; K)').replace('HeadlessChrome/', 'Chrome/').replace(' Safari/', ' Mobile Safari/'),
+    platform: 'Linux armv8l',
+    userAgentMetadata: {
+      brands: [{ brand: 'Chromium', version: major }, { brand: 'Google Chrome', version: major }, { brand: 'Not=A?Brand', version: '99' }],
+      fullVersion: full, platform: 'Android', platformVersion: '10.0.0', architecture: '', model: 'K', mobile: true,
+    },
+  }
+}

@@ -1,0 +1,815 @@
+#!/usr/bin/env node
+// Прогоняет сценарии в браузере: шаги, ожидания по условию, подмена ответов API; на выходе —
+// состояние DOM, сетевые запросы и console каждого сценария строкой JSONL. Свой headless
+// Chrome на каждый вызов.
+//
+// Запуск:
+//   node <package>/bin/cdp-run.mjs <сценарии.json> --out <результат.jsonl>
+//     --base-url http://localhost:3000   # адрес вместо baseUrl файла сценариев
+//     --only save,login                  # только названные сценарии (полное имя или до @)
+//     --profile <каталог>                # профиль Chrome — свой, в scratchpad; без флага —
+//                                        # временный каталог, удаляется после прогона
+// SCREENSHOT_TASK=<КОД> — относительные пути скриншотов ложатся в memory/tasks/<КОД>/screenshots/,
+// как у cdp-screenshot.mjs; без него — от текущего каталога, абсолютный путь — как есть.
+//
+// Chrome поднимается на свободном порту и закрывается через Browser.close по CDP. Каждый
+// сценарий — в своём контексте браузера: cookies и localStorage между сценариями не переходят.
+// Где искать Chrome — как у cdp-screenshot.mjs (там режим --find-chrome); личные флаги
+// запуска — переменная BEERPOWERS_CHROME_ARGS через пробел.
+//
+// Файл сценариев — массив сценариев или объект { baseUrl, timeout, network, console, userAgent,
+// mocks, init, scenarios }: поля верхнего уровня — умолчания каждого сценария; mocks и init сценария
+// добавляются к общим, свои mocks — первыми.
+//
+// Поля сценария:
+//   name     — имя в выводе и в JSONL, по умолчанию s<номер>
+//   viewport — имя из viewports проекта (.codex/workspace.json): даёт width, height и mobile,
+//              явно заданные поля важнее; "*" — сценарий на каждую запись, имя получает @<имя>
+//   width, height, mobile — без viewport; mobile включает эмуляцию касаний и мобильный
+//              User-Agent: тот же Chrome с платформой Android и пометкой Mobile, Client Hints
+//              тоже мобильные — сайты выбирают вёрстку по нему, а не по ширине
+//   userAgent — свой User-Agent строкой, важнее мобильного
+//   timeout  — предел ожидания шага, мс: по умолчанию 15000, у goto — вдвое больше
+//   init     — скрипт или массив скриптов, которые идут до кода каждой страницы (заглушки)
+//   mocks    — подмена ответов, см. ниже
+//   steps    — шаги по порядку, см. ниже
+//   state    — { имя: выражение }: снимается после шагов, и после падения тоже
+//   network  — "all": все запросы; по умолчанию — документы, XHR, fetch, подменённые и с ошибкой
+//   console  — "all": все сообщения; по умолчанию — error, warning и исключения
+//
+// Шаг — объект с одним действием (у любого шага — свой "timeout"):
+//   { "goto": "/path" }                     — переход, ждёт load; адрес от baseUrl
+//   { "click": "<css>", "hasText": "…" }    — первый видимый элемент (hasText — подстрока его
+//                                             текста); ждёт, пока элемент не перекрыт и не движется,
+//                                             и кликает мышью в центр, у mobile — касанием.
+//                                             Прокручивает, только если центр элемента вне
+//                                             вьюпорта или перекрыт: тогда ставит его в центр
+//   { "hover": "<css>", "hasText": "…" }    — навести мышь в центр элемента, как у click, без нажатия
+//   { "drag": "<css>", "by": [dx, dy] }     — нажать в центре элемента и протянуть на dx, dy пикселей
+//                                             за 10 шагов: у mobile — касанием (свайп), иначе мышью
+//   { "type": "<css>", "text": "…" }        — фокус, выделить всё, ввести как с клавиатуры;
+//                                             "" очищает поле
+//   { "press": "Enter", "target": "<css>" } — клавиша; target сначала получает фокус
+//   { "submit": "<css формы>" }             — form.requestSubmit(): с проверкой полей и событием submit
+//   { "wait": { <условие>, "timeout": мс } } — одно из условий:
+//       "selector": "<css>" (+ "hasText") — элемент виден;  "gone": "<css>" — видимых нет;
+//       "expr": "<выражение>" — истинно;  "url": "<подстрока>" — адрес страницы её содержит;
+//       "networkIdle": мс — столько мс ни одного запроса в полёте; preflight оборванного
+//       запроса в полёте не считается
+//   { "eval": "<выражение>" }               — выполнить в странице, можно await
+//   { "capture": { имя: выражение } }       — значения в state сейчас, между шагами
+//   { "screenshot": "<файл>.png", "fullPage": true, "selector": "<css>" }
+//                                           — в имени подставляются {name}, {viewport}, {width}
+// Фиксированной паузы среди шагов нет намеренно: ожидание — только по условию.
+//
+// Подмена ответа — { "url": "<шаблон, * и ?>", "method": "GET" } и одно из:
+//   "json": значение | "body": "строка" | "bodyFile": "путь от файла сценариев" — ответ без
+//       сервера; "status" (200) и "headers" по желанию; Origin запроса отражается в CORS;
+//   "mergePatch": объект — ответ сервера, к JSON которого применён merge patch (RFC 7396:
+//       объекты сливаются, null удаляет ключ, массив заменяется целиком);
+//   "abort": true — запрос падает сетевой ошибкой.
+// Подходящих записей несколько — побеждает первая.
+//
+// Вывод: строка браузера, строка на сценарий (ok или FAIL с шагом и причиной), итог
+// TOTAL scenarios=<n> failed=<m>. Код выхода: 0 — все сценарии прошли, 1 — какой-то упал,
+// 2 — прогон не начался: аргументы, файл сценариев, Chrome. Упал — значит, шаг не выполнился
+// или подмена не применилась; проверки результата инструмент не делает — они отдельным шагом
+// по JSONL.
+//
+// Строка JSONL на сценарий: name, viewport, width, height, mobile, ok, error { step, action,
+// message }, ms, steps [{ i, action, ms }], state, stateErrors, network [{ step, method, url,
+// finalUrl, status, redirects [{ status, url }], type, mocked, failed }], console [{ step, level,
+// text }], screenshots, failShot — снимок в момент падения рядом с --out. step у событий — номер
+// шага с 0, во время которого событие пришло, -1 — до первого шага: запрос, который вызвал клик,
+// часто приходит уже во время следующего шага-ожидания.
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { findChrome, mobileUserAgent } from './lib/chrome.mjs'
+import { findRoot, loadWorkspace, taskDirectory, workspacePath } from './lib/ui-workspace.mjs'
+
+const argv = process.argv.slice(2)
+// Справка — шапка этого файла: вторая копия текста разошлась бы с ней.
+if (!argv.length || argv.includes('-h') || argv.includes('--help')) {
+  const head = readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(2)
+  const end = head.findIndex(l => !l.startsWith('//'))
+  console.log(head.slice(0, end).map(l => l.replace(/^\/\/ ?/, '')).join('\n'))
+  process.exit(argv.length ? 0 : 2)
+}
+
+function usage(msg) {
+  console.error(`${msg}. Справка — --help`)
+  process.exit(2)
+}
+
+const opts = { file: null, out: null, baseUrl: null, only: null, profile: null }
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i]
+  const value = () => argv[++i] ?? usage(`${a} ждёт значение`)
+  if (a === '--out') opts.out = value()
+  else if (a === '--base-url') opts.baseUrl = value()
+  else if (a === '--only') opts.only = value().split(',').map(s => s.trim()).filter(Boolean)
+  else if (a === '--profile') opts.profile = value()
+  else if (a.startsWith('--')) usage(`неизвестный флаг ${a}`)
+  else if (opts.file) usage(`второй файл сценариев: ${a}`)
+  else opts.file = a
+}
+if (!opts.file) usage('нужен файл сценариев')
+if (!opts.out) usage('нужен --out <результат.jsonl>')
+
+let workspace = null
+function project() {
+  if (workspace) return workspace
+  workspace = loadWorkspace(findRoot())
+  const fatal = workspace.problems.find(p => p.fatal)
+  if (fatal) usage(`.codex/workspace.json: ${fatal.msg}`)
+  return workspace
+}
+
+// --- файл сценариев: всё проверяется до запуска Chrome --------------------------------------
+
+let spec
+try {
+  spec = JSON.parse(readFileSync(opts.file, 'utf8'))
+} catch (e) {
+  usage(`файл сценариев ${opts.file}: ${e.message}`)
+}
+const specDir = dirname(resolve(opts.file))
+const top = Array.isArray(spec) ? { scenarios: spec } : spec
+const problems = []
+const problem = (where, msg) => problems.push(`${where}: ${msg}`)
+const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v)
+const asList = v => v === undefined ? [] : Array.isArray(v) ? v : [v]
+
+const TOP_KEYS = ['baseUrl', 'timeout', 'network', 'console', 'userAgent', 'mocks', 'init', 'scenarios']
+const SCENARIO_KEYS = ['name', 'viewport', 'width', 'height', 'mobile', 'userAgent', 'baseUrl', 'timeout', 'init', 'mocks', 'steps', 'state', 'network', 'console']
+const STEP_KEYS = {
+  goto: [], click: ['hasText'], hover: ['hasText'], drag: ['by', 'hasText'], type: ['text', 'hasText'],
+  press: ['target'], submit: ['hasText'], wait: [], eval: [], capture: [], screenshot: ['fullPage', 'selector', 'hasText'],
+}
+const WAIT_KEYS = ['selector', 'gone', 'expr', 'url', 'networkIdle']
+const KEYS = {
+  Enter: [13, '\r'], Tab: [9], Escape: [27], Backspace: [8], Delete: [46], Space: [32, ' '],
+  ArrowUp: [38], ArrowDown: [40], ArrowLeft: [37], ArrowRight: [39], Home: [36], End: [35],
+  PageUp: [33], PageDown: [34],
+}
+const MOCK_KINDS = ['json', 'body', 'bodyFile', 'mergePatch', 'abort']
+
+if (!isObject(top) || !Array.isArray(top.scenarios) || !top.scenarios.length) {
+  usage(`${opts.file}: ждётся непустой массив сценариев или объект с полем scenarios`)
+}
+for (const k of Object.keys(top)) if (!TOP_KEYS.includes(k)) problem('файл', `неизвестное поле ${k}`)
+
+const globRe = g => new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$')
+
+function checkMocks(where, mocks) {
+  if (!Array.isArray(mocks)) { problem(where, 'mocks — массив'); return [] }
+  return mocks.map((m, i) => {
+    const at = `${where}.mocks[${i}]`
+    if (!isObject(m) || typeof m.url !== 'string') { problem(at, 'нужен url — шаблон адреса'); return null }
+    const kinds = MOCK_KINDS.filter(k => k in m)
+    if (kinds.length > 1) problem(at, `одно из ${MOCK_KINDS.join(', ')}, а не ${kinds.join(' и ')}`)
+    if (!kinds.length && !('status' in m)) problem(at, `нужно одно из ${MOCK_KINDS.join(', ')} или status`)
+    for (const k of Object.keys(m)) if (![...MOCK_KINDS, 'url', 'method', 'status', 'headers'].includes(k)) problem(at, `неизвестное поле ${k}`)
+    if ((kinds[0] === 'mergePatch' || kinds[0] === 'abort') && ('status' in m || 'headers' in m)) problem(at, `status и headers — только у ответа без сервера, не у ${kinds[0]}`)
+    if ('mergePatch' in m && !isObject(m.mergePatch)) problem(at, 'mergePatch — объект')
+    if ('abort' in m && m.abort !== true) problem(at, 'abort — только true')
+    if ('headers' in m && !isObject(m.headers)) problem(at, 'headers — объект')
+    let body = typeof m.body === 'string' ? m.body : 'json' in m ? JSON.stringify(m.json) : ''
+    if ('body' in m && typeof m.body !== 'string') problem(at, 'body — строка; JSON — полем json')
+    if ('bodyFile' in m) {
+      const file = resolve(specDir, String(m.bodyFile))
+      if (!existsSync(file)) problem(at, `bodyFile ${file} нет`)
+      else body = readFileSync(file, 'utf8')
+    }
+    return { ...m, method: m.method?.toUpperCase(), re: globRe(m.url), bodyText: body }
+  }).filter(Boolean)
+}
+
+function checkStep(at, s, baseUrl) {
+  if (!isObject(s)) { problem(at, 'шаг — объект'); return }
+  const actions = Object.keys(s).filter(k => k in STEP_KEYS)
+  if (actions.length !== 1) { problem(at, `одно действие из ${Object.keys(STEP_KEYS).join(', ')}, а не ${actions.join(' и ') || 'ни одного'}`); return }
+  const [a] = actions
+  for (const k of Object.keys(s)) if (k !== a && k !== 'timeout' && !STEP_KEYS[a].includes(k)) problem(at, `у ${a} нет поля ${k}`)
+  const v = s[a]
+  if (a === 'wait') {
+    if (!isObject(v)) { problem(at, 'wait — объект с условием'); return }
+    const conds = WAIT_KEYS.filter(k => k in v)
+    if (conds.length !== 1) problem(at, `wait — одно условие из ${WAIT_KEYS.join(', ')}`)
+    for (const k of Object.keys(v)) if (![...WAIT_KEYS, 'hasText', 'timeout'].includes(k)) problem(at, `у wait нет поля ${k}`)
+    if ('networkIdle' in v && !(Number.isInteger(v.networkIdle) && v.networkIdle > 0)) problem(at, 'networkIdle — мс, целое больше нуля')
+    if ('hasText' in v && !('selector' in v || 'gone' in v)) problem(at, 'hasText — только у selector и gone')
+  } else if (a === 'capture') {
+    if (!isObject(v) || !Object.values(v).every(e => typeof e === 'string')) problem(at, 'capture — { имя: выражение }')
+  } else if (typeof v !== 'string' || !v) {
+    problem(at, `${a} — непустая строка`)
+  }
+  if (a === 'type' && typeof s.text !== 'string') problem(at, 'type ждёт text — строку')
+  if (a === 'drag' && !(Array.isArray(s.by) && s.by.length === 2 && s.by.every(Number.isFinite))) problem(at, 'drag ждёт by — [dx, dy] в пикселях')
+  if (a === 'press' && !(v in KEYS)) problem(at, `клавиша ${v} неизвестна: ${Object.keys(KEYS).join(', ')}`)
+  if (a === 'screenshot' && !String(v).endsWith('.png')) problem(at, 'screenshot — имя файла .png')
+  if (a === 'goto' && typeof v === 'string' && !/^[a-z][a-z0-9+.-]*:/i.test(v) && !baseUrl) problem(at, `относительный адрес ${v} без baseUrl и --base-url`)
+}
+
+const defaults = { timeout: top.timeout ?? 15000, network: top.network, console: top.console, userAgent: top.userAgent }
+const topMocks = checkMocks('файл', top.mocks ?? [])
+const scenarios = []
+for (const [i, raw] of top.scenarios.entries()) {
+  const at = `scenarios[${i}]`
+  if (!isObject(raw)) { problem(at, 'сценарий — объект'); continue }
+  for (const k of Object.keys(raw)) if (!SCENARIO_KEYS.includes(k)) problem(at, `неизвестное поле ${k}`)
+  const name = raw.name ?? `s${i + 1}`
+  const sc = {
+    ...defaults, ...raw, name,
+    baseUrl: opts.baseUrl ?? raw.baseUrl ?? top.baseUrl,
+    mocks: [...checkMocks(at, raw.mocks ?? []), ...topMocks],
+    init: [...asList(top.init), ...asList(raw.init)],
+  }
+  if (!sc.init.every(s => typeof s === 'string')) problem(at, 'init — строка или массив строк')
+  if (!Array.isArray(raw.steps) || !raw.steps.length) problem(at, 'steps — непустой массив')
+  else raw.steps.forEach((s, j) => checkStep(`${at}.steps[${j}]`, s, sc.baseUrl))
+  if ('state' in raw && !(isObject(raw.state) && Object.values(raw.state).every(e => typeof e === 'string'))) problem(at, 'state — { имя: выражение }')
+  for (const k of ['network', 'console']) if (sc[k] !== undefined && sc[k] !== 'all') problem(at, `${k} — только "all"`)
+  if (sc.userAgent !== undefined && (typeof sc.userAgent !== 'string' || !sc.userAgent)) problem(at, 'userAgent — непустая строка')
+  if (raw.viewport === '*') {
+    for (const vp of project().viewports) scenarios.push({ ...sc, name: `${name}@${vp.name}`, viewport: vp.name, width: vp.width, height: vp.height, mobile: vp.mobile })
+  } else if (raw.viewport !== undefined) {
+    const vp = project().viewports.find(v => v.name === raw.viewport)
+    if (!vp) problem(at, `viewport «${raw.viewport}» нет в списке проекта: ${project().viewports.map(v => v.name).join(', ')}`)
+    else scenarios.push({ ...sc, width: raw.width ?? vp.width, height: raw.height ?? vp.height, mobile: raw.mobile ?? vp.mobile })
+  } else if (!Number.isInteger(raw.width) || !Number.isInteger(raw.height)) {
+    problem(at, 'нужен viewport или width и height')
+  } else {
+    scenarios.push({ ...sc, viewport: null, mobile: Boolean(raw.mobile) })
+  }
+}
+const names = new Set()
+for (const sc of scenarios) {
+  if (names.has(sc.name)) problem(sc.name, 'имя сценария повторяется')
+  names.add(sc.name)
+}
+
+let run = scenarios
+if (opts.only) {
+  run = scenarios.filter(sc => opts.only.includes(sc.name) || opts.only.includes(sc.name.split('@')[0]))
+  const unknown = opts.only.filter(n => !scenarios.some(sc => sc.name === n || sc.name.split('@')[0] === n))
+  if (unknown.length) problem('--only', `нет сценариев ${unknown.join(', ')}`)
+}
+
+// Пути скриншотов разрешаются до запуска: ошибка в пути не должна стоить полупрогнанного набора.
+const TASK = process.env.SCREENSHOT_TASK
+let screenshotsDir = null
+if (TASK) {
+  taskDirectory(project().root, TASK)
+  screenshotsDir = workspacePath(project().root, 'memory/tasks/' + TASK + '/screenshots')
+}
+const outFile = resolve(opts.out)
+const safe = s => s.replace(/[^A-Za-z0-9_.@-]/g, '_')
+for (const sc of run) {
+  sc.steps = sc.steps.map((s) => {
+    if (!('screenshot' in s)) return s
+    const name = s.screenshot.replace(/\{name\}/g, safe(sc.name)).replace(/\{viewport\}/g, sc.viewport ?? 'custom').replace(/\{width\}/g, sc.width)
+    if (screenshotsDir) return { ...s, file: workspacePath(project().root, 'memory/tasks/' + TASK + '/screenshots/' + name) }
+    if (isAbsolute(name)) return { ...s, file: name }
+    return { ...s, file: resolve(name) }
+  })
+  sc.failShot = join(dirname(outFile), `${safe(sc.name)}-FAIL.png`)
+}
+
+if (problems.length) {
+  console.error(`файл сценариев ${opts.file} не прошёл проверку:\n  ${problems.join('\n  ')}`)
+  process.exit(2)
+}
+
+// --- Chrome ---------------------------------------------------------------------------------
+
+const { path: chromePath, tried } = findChrome()
+if (!chromePath) {
+  console.error(`Chrome не найден. Проверено:\n  ${tried.join('\n  ') || '(для этой ОС мест нет)'}\n` +
+    'Укажи путь личной переменной BEERPOWERS_CHROME в окружении пользователя.')
+  process.exit(2)
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const tempProfile = !opts.profile
+const profile = opts.profile ? resolve(opts.profile) : mkdtempSync(join(tmpdir(), 'cdp-run-'))
+mkdirSync(profile, { recursive: true })
+const portFile = join(profile, 'DevToolsActivePort')
+rmSync(portFile, { force: true })
+
+// Порт 0 — свободный порт выбирает сам Chrome и пишет его в DevToolsActivePort профиля:
+// соседняя роль со своим Chrome не перехватит подключение.
+const extraArgs = (process.env.BEERPOWERS_CHROME_ARGS ?? '').split(/\s+/).filter(Boolean)
+const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+  '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check', '--disable-gpu', ...extraArgs, 'about:blank'],
+{ windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+let chromeLog = ''
+let chromeExit = null
+chrome.stderr.on('data', (d) => { chromeLog = (chromeLog + d).slice(-3000) })
+chrome.on('exit', (code, signal) => { chromeExit = signal ?? code })
+chrome.on('error', (e) => { chromeExit = e.message })
+
+let wsUrl = null
+for (let i = 0; i < 200 && !wsUrl && chromeExit === null; i++) {
+  let lines = []
+  try {
+    lines = readFileSync(portFile, 'utf8').split('\n')
+  } catch (error) {
+    // На Windows файл может быть виден до того, как Chrome закончит запись.
+    if (error.code !== 'ENOENT' && !(process.platform === 'win32' && error.code === 'EBUSY')) throw error
+  }
+  if (lines.length >= 2 && lines[1].trim()) wsUrl = `ws://127.0.0.1:${lines[0].trim()}${lines[1].trim()}`
+  else await sleep(100)
+}
+if (!wsUrl) {
+  if (chromeExit === null) chrome.kill()
+  console.error(`Chrome ${chromePath} не открыл порт отладки за 20 с${chromeExit === null ? '' : ` (вышел: ${chromeExit})`}.\n${chromeLog.trim()}`)
+  if (tempProfile) rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  process.exit(2)
+}
+
+const ws = new WebSocket(wsUrl)
+await new Promise((ok, fail) => {
+  ws.addEventListener('open', ok)
+  ws.addEventListener('error', () => fail(new Error(`нет подключения к ${wsUrl}`)))
+})
+let nextId = 0
+const pending = new Map()
+const listeners = new Set()
+ws.addEventListener('message', (event) => {
+  const msg = JSON.parse(event.data)
+  if (msg.id && pending.has(msg.id)) {
+    const { ok, fail, method } = pending.get(msg.id)
+    pending.delete(msg.id)
+    msg.error ? fail(new Error(`${method}: ${msg.error.message}`)) : ok(msg.result)
+    return
+  }
+  for (const listener of listeners) listener(msg)
+})
+ws.addEventListener('close', () => {
+  for (const { fail } of pending.values()) fail(new Error('соединение с Chrome закрыто'))
+  pending.clear()
+})
+const send = (method, params = {}, sessionId) => new Promise((ok, fail) => {
+  if (ws.readyState !== WebSocket.OPEN) return fail(new Error('соединение с Chrome закрыто'))
+  const id = ++nextId
+  pending.set(id, { ok, fail, method })
+  ws.send(JSON.stringify({ id, method, params, sessionId }))
+})
+
+let closed = false
+async function shutdown() {
+  if (closed) return
+  closed = true
+  if (chromeExit === null) {
+    send('Browser.close').catch(() => {})
+    for (let i = 0; i < 100 && chromeExit === null; i++) await sleep(100)
+    if (chromeExit === null) {
+      chrome.kill()
+      console.error(`Chrome pid=${chrome.pid} не закрылся по Browser.close — послан сигнал; проверь, что процесса нет`)
+    }
+  }
+  ws.close()
+  if (tempProfile) {
+    try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) }
+    catch (e) { console.error(`временный профиль ${profile} не удалён: ${e.message}`) }
+  }
+}
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown().then(() => process.exit(130)))
+
+// --- сценарий -------------------------------------------------------------------------------
+
+function mergePatch(target, patch) {
+  if (!isObject(patch)) return patch
+  const out = isObject(target) ? { ...target } : {}
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete out[k]
+    else out[k] = mergePatch(out[k], v)
+  }
+  return out
+}
+
+// Поиск элемента в странице: первый видимый, hasText — подстрока текста без лишних пробелов.
+const PAGE_FIND = `(sel, hasText) => {
+  const norm = s => (s ?? '').replace(/\\s+/g, ' ').trim()
+  const shown = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden' }
+  return [...document.querySelectorAll(sel)].find(el => shown(el) && (hasText == null || norm(el.innerText).includes(hasText))) ?? null
+}`
+const find = (sel, hasText) => `(${PAGE_FIND})(${JSON.stringify(sel)}, ${JSON.stringify(hasText ?? null)})`
+
+function describe(s) {
+  const a = Object.keys(s).find(k => k in STEP_KEYS)
+  const v = s[a]
+  const what = a === 'wait' ? WAIT_KEYS.filter(k => k in v).map(k => `${k} ${v[k]}`).join(' ') + (v.hasText ? ` «${v.hasText}»` : '')
+    : a === 'capture' ? Object.keys(v).join(',')
+      : `${v}${s.hasText ? ` «${s.hasText}»` : ''}`
+  return `${a} ${what}`.replace(/\s+/g, ' ').slice(0, 160)
+}
+
+const API_TYPES = ['Document', 'XHR', 'Fetch']
+const LOUD = ['error', 'warning', 'assert', 'exception']
+
+async function runScenario(sc) {
+  const t0 = Date.now()
+  const r = {
+    name: sc.name, viewport: sc.viewport, width: sc.width, height: sc.height, mobile: Boolean(sc.mobile),
+    ok: true, error: null, ms: 0, steps: [], state: {}, stateErrors: {}, network: [], console: [],
+    screenshots: [], failShot: null,
+  }
+  let step = -1
+  let loads = 0
+  let lastNet = Date.now()
+  let mockError = null
+  const requests = new Map()
+  const inflight = new Map()
+  const mocked = new Map()
+  let sessionId = null
+  let targetId = null
+  let browserContextId = null
+  const S = (method, params) => send(method, params, sessionId)
+  const clip = s => String(s).replace(/\s+/g, ' ').trim().slice(0, 1000)
+  const say = (level, text) => {
+    if (sc.console === 'all' || LOUD.includes(level)) r.console.push({ step, level, text: clip(text) })
+  }
+
+  const evaluate = async (expression) => {
+    const res = await S('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, replMode: true, userGesture: true })
+    if (res.exceptionDetails) {
+      const d = res.exceptionDetails
+      throw new Error((d.exception?.description ?? d.text).split('\n')[0])
+    }
+    return res.result.value
+  }
+  // Ожидание по условию: опрос каждые 100 мс. Ошибка выражения не прерывает опрос — во время
+  // перехода контекст страницы пересоздаётся, — а попадает в причину, если вышло время.
+  const poll = async (check, timeout, reason) => {
+    const until = Date.now() + timeout
+    let last = null
+    for (;;) {
+      try {
+        const v = await check()
+        if (v) return v
+      } catch (e) {
+        last = e.message
+      }
+      if (Date.now() > until) throw new Error(`не дождались за ${timeout} мс${[reason(), last].filter(Boolean).map(x => `: ${x}`).join('')}`)
+      await sleep(100)
+    }
+  }
+
+  async function release(p, atResponse) {
+    if (atResponse) {
+      try { return await S('Fetch.continueResponse', { requestId: p.requestId }) } catch { /* старый Chrome — ниже */ }
+    }
+    return S('Fetch.continueRequest', { requestId: p.requestId })
+  }
+  async function onPaused(p) {
+    const atResponse = p.responseStatusCode !== undefined || p.responseErrorReason !== undefined
+    const mock = sc.mocks.find(m => m.re.test(p.request.url) && (!m.method || m.method === p.request.method))
+    if (!mock || Boolean(mock.mergePatch) !== atResponse) return release(p, atResponse)
+    const label = `${mock.method ?? '*'} ${mock.url}`
+    if (mock.abort) {
+      mocked.set(p.networkId, label)
+      return S('Fetch.failRequest', { requestId: p.requestId, errorReason: 'BlockedByClient' })
+    }
+    if (mock.mergePatch) {
+      if (p.responseErrorReason || (p.responseStatusCode >= 300 && p.responseStatusCode < 400)) return release(p, true)
+      let json
+      try {
+        const { body, base64Encoded } = await S('Fetch.getResponseBody', { requestId: p.requestId })
+        json = JSON.parse(base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body)
+      } catch (e) {
+        await release(p, true)
+        throw new Error(`ответ ${p.responseStatusCode} — не JSON (${e.message})`)
+      }
+      mocked.set(p.networkId, label)
+      const headers = (p.responseHeaders ?? []).filter(h => !['content-length', 'content-encoding'].includes(h.name.toLowerCase()))
+      return S('Fetch.fulfillRequest', {
+        requestId: p.requestId, responseCode: p.responseStatusCode, responseHeaders: headers,
+        body: Buffer.from(JSON.stringify(mergePatch(json, mock.mergePatch))).toString('base64'),
+      })
+    }
+    const headers = { 'content-type': 'json' in mock ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8' }
+    for (const [k, v] of Object.entries(mock.headers ?? {})) headers[k.toLowerCase()] = String(v)
+    const origin = Object.entries(p.request.headers ?? {}).find(([k]) => k.toLowerCase() === 'origin')?.[1]
+    if (origin && !('access-control-allow-origin' in headers)) {
+      headers['access-control-allow-origin'] = origin
+      headers['access-control-allow-credentials'] = 'true'
+    }
+    mocked.set(p.networkId, label)
+    return S('Fetch.fulfillRequest', {
+      requestId: p.requestId, responseCode: mock.status ?? 200,
+      responseHeaders: Object.entries(headers).map(([name, value]) => ({ name, value })),
+      body: Buffer.from(mock.bodyText).toString('base64'),
+    })
+  }
+
+  const settle = (id) => {
+    inflight.delete(id)
+    for (const [k, v] of inflight) if (v.parent === id) inflight.delete(k)
+    lastNet = Date.now()
+  }
+
+  const onEvent = (msg) => {
+    if (msg.sessionId !== sessionId || !sessionId) return
+    const p = msg.params
+    switch (msg.method) {
+      case 'Page.loadEventFired': loads++; break
+      case 'Runtime.consoleAPICalled':
+        say(p.type, p.args.map(a => a.value ?? a.unserializableValue ?? a.description ?? '').join(' '))
+        break
+      case 'Runtime.exceptionThrown':
+        say('exception', p.exceptionDetails.exception?.description ?? p.exceptionDetails.text)
+        break
+      case 'Log.entryAdded':
+        say(p.entry.level, p.entry.text + (p.entry.url ? ` ${p.entry.url}` : ''))
+        break
+      case 'Network.requestWillBeSent': {
+        if (/^(data|blob):/.test(p.request.url)) break
+        const known = requests.get(p.requestId)
+        if (known && p.redirectResponse) {
+          known.redirects.push({ status: p.redirectResponse.status, url: p.redirectResponse.url })
+          known.finalUrl = p.request.url
+          break
+        }
+        requests.set(p.requestId, {
+          step, method: p.request.method, url: p.request.url, finalUrl: p.request.url, status: null,
+          redirects: [], type: p.type ?? null, mocked: null, failed: null,
+        })
+        // Preflight оборванного запроса Chrome не завершает ни одним событием: он в полёте,
+        // пока в полёте его запрос, и уходит вместе с ним.
+        const parent = p.initiator?.type === 'preflight' ? p.initiator.requestId ?? null : null
+        const orphan = parent && requests.has(parent) && !inflight.has(parent)
+        if (p.type !== 'EventSource' && p.type !== 'WebSocket' && !orphan) inflight.set(p.requestId, { url: p.request.url, parent })
+        lastNet = Date.now()
+        break
+      }
+      case 'Network.responseReceived': {
+        const e = requests.get(p.requestId)
+        if (e) { e.status = p.response.status; e.finalUrl = p.response.url }
+        break
+      }
+      case 'Network.loadingFinished':
+        settle(p.requestId)
+        break
+      case 'Network.loadingFailed': {
+        const e = requests.get(p.requestId)
+        if (e) e.failed = p.errorText
+        settle(p.requestId)
+        break
+      }
+      case 'Fetch.requestPaused':
+        onPaused(p).catch((e) => { mockError ??= `подмена ${p.request.url}: ${e.message}` })
+        break
+    }
+  }
+
+  // Точка для указателя — центр элемента. Прокрутка — только когда центр вне вьюпорта или
+  // перекрыт (липкая шапка у края): лишняя прокрутка сдвигает scrollY, а его меряют сценарии. Элемент в движении (анимация, плавная
+  // прокрутка контейнера) ждётся, пока два замера подряд не совпадут: иначе нажатие придёт
+  // по устаревшим координатам в соседний элемент.
+  async function point(sel, hasText, timeout, enabled) {
+    let why = 'видимого элемента нет'
+    let last = null
+    return poll(async () => {
+      const v = await evaluate(`(() => {
+        const el = ${find(sel, hasText)}
+        if (!el) return { why: 'видимого элемента нет' }
+        const center = () => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } }
+        const covered = (x, y) => { const h = document.elementFromPoint(x, y); return !h || (h !== el && !el.contains(h)) }
+        let { x, y } = center()
+        if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight || covered(x, y)) {
+          el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+          ({ x, y } = center())
+        }
+        const hit = document.elementFromPoint(x, y)
+        if (covered(x, y)) {
+          const cls = hit && typeof hit.className === 'string' ? hit.className.trim().split(/\\s+/).filter(Boolean).map(c => '.' + c).join('') : ''
+          return { why: 'перекрыт: ' + (hit ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + cls : 'точка вне страницы') }
+        }
+        if (${Boolean(enabled)} && el.disabled) return { why: 'disabled' }
+        return { x, y }
+      })()`)
+      if (v.why) { why = v.why; last = null; return null }
+      const still = last && last.x === v.x && last.y === v.y
+      if (last && !still) why = 'движется'
+      last = v
+      return still ? v : null
+    }, timeout, () => why)
+  }
+
+  async function click(s, timeout) {
+    const at = await point(s.click, s.hasText, timeout, true)
+    if (sc.mobile) {
+      await S('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at.x, y: at.y }] })
+      await S('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      return
+    }
+    await S('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
+    await S('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: 1, clickCount: 1 })
+    await S('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', buttons: 0, clickCount: 1 })
+  }
+
+  // Протяжка — 10 промежуточных точек через кадр (16 мс): библиотеки жестов считают скорость,
+  // и прыжок одной точкой в конец свайпом для них не выглядит.
+  async function drag(s, timeout) {
+    const at = await point(s.drag, s.hasText, timeout, false)
+    const [dx, dy] = s.by
+    const N = 10
+    const p = k => ({ x: at.x + dx * k / N, y: at.y + dy * k / N })
+    if (sc.mobile) {
+      await S('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [at] })
+      for (let k = 1; k <= N; k++) {
+        await sleep(16)
+        await S('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [p(k)] })
+      }
+      await S('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      return
+    }
+    await S('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at })
+    await S('Input.dispatchMouseEvent', { type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount: 1 })
+    for (let k = 1; k <= N; k++) {
+      await sleep(16)
+      await S('Input.dispatchMouseEvent', { type: 'mouseMoved', ...p(k), button: 'left', buttons: 1 })
+    }
+    await S('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p(N), button: 'left', buttons: 0, clickCount: 1 })
+  }
+
+  const focus = (sel, hasText, timeout, s) => poll(() => evaluate(`(() => {
+    const el = ${find(sel, hasText)}
+    if (!el) return false
+    el.focus()
+    if (typeof el.select === 'function') el.select()
+    else if (el.isContentEditable) { const r = document.createRange(); r.selectNodeContents(el); getSelection().removeAllRanges(); getSelection().addRange(r) }
+    return document.activeElement === el
+  })()`), timeout, () => 'видимого элемента, который берёт фокус, нет')
+
+  async function press(key) {
+    const [code, text] = KEYS[key]
+    const base = { key: key === 'Space' ? ' ' : key, code: key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code }
+    await S('Input.dispatchKeyEvent', { ...base, type: text ? 'keyDown' : 'rawKeyDown', ...(text ? { text } : {}) })
+    await S('Input.dispatchKeyEvent', { ...base, type: 'keyUp' })
+  }
+
+  async function runStep(s) {
+    const timeout = s.timeout ?? sc.timeout
+    if ('goto' in s) {
+      const url = new URL(s.goto, sc.baseUrl).href
+      const before = loads
+      const nav = await S('Page.navigate', { url })
+      if (nav.errorText) throw new Error(`переход на ${url}: ${nav.errorText}`)
+      if (nav.loaderId) await poll(() => loads > before, s.timeout ?? sc.timeout * 2, () => 'события load')
+    } else if ('click' in s) {
+      await click(s, timeout)
+    } else if ('hover' in s) {
+      const at = await point(s.hover, s.hasText, timeout, false)
+      await S('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
+    } else if ('drag' in s) {
+      await drag(s, timeout)
+    } else if ('type' in s) {
+      await focus(s.type, s.hasText, timeout, s)
+      if (s.text === '') await press('Backspace')
+      else await S('Input.insertText', { text: s.text })
+    } else if ('press' in s) {
+      if (s.target) await focus(s.target, null, timeout, s)
+      await press(s.press)
+    } else if ('submit' in s) {
+      await poll(() => evaluate(`(() => {
+        const form = ${find(s.submit, s.hasText)}
+        if (!form) return false
+        if (!(form instanceof HTMLFormElement)) throw new Error('не форма: ' + form.tagName.toLowerCase())
+        form.requestSubmit()
+        return true
+      })()`), timeout, () => 'видимой формы нет')
+    } else if ('wait' in s) {
+      const w = s.wait
+      const t = w.timeout ?? timeout
+      if ('networkIdle' in w) {
+        await poll(() => !inflight.size && Date.now() - lastNet >= w.networkIdle, t,
+          () => `в полёте ${[...inflight.values()].slice(0, 3).map(v => v.url).join(', ')}`)
+      } else {
+        const expr = 'selector' in w ? `Boolean(${find(w.selector, w.hasText)})`
+          : 'gone' in w ? `!${find(w.gone, w.hasText)}`
+            : 'url' in w ? `location.href.includes(${JSON.stringify(w.url)})`
+              : `Boolean(await (async () => (${w.expr}))())`
+        await poll(() => evaluate(expr), t, () => '')
+      }
+    } else if ('eval' in s) {
+      await evaluate(s.eval)
+    } else if ('capture' in s) {
+      for (const [k, expr] of Object.entries(s.capture)) {
+        try { r.state[k] = await evaluate(expr) } catch (e) { throw new Error(`capture ${k}: ${e.message}`) }
+      }
+    } else if ('screenshot' in s) {
+      await screenshot(s.file, s, timeout)
+      r.screenshots.push(s.file)
+    }
+  }
+
+  async function screenshot(file, s = {}, timeout = sc.timeout) {
+    let area
+    if (s.selector) {
+      area = await poll(() => evaluate(`(() => {
+        const el = ${find(s.selector, s.hasText)}
+        if (!el) return null
+        el.scrollIntoView({ block: 'start', behavior: 'instant' })
+        const r = el.getBoundingClientRect()
+        return { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height, scale: 1 }
+      })()`), timeout, () => `видимого ${s.selector} нет`)
+    } else if (s.fullPage) {
+      const { cssContentSize } = await S('Page.getLayoutMetrics')
+      area = {
+        x: 0, y: 0, scale: 1,
+        width: Math.max(sc.width, cssContentSize.width),
+        height: Math.max(sc.height, cssContentSize.height),
+      }
+    }
+    const shot = await S('Page.captureScreenshot', { format: 'png', ...(area ? { clip: area, captureBeyondViewport: true } : {}) })
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, Buffer.from(shot.data, 'base64'))
+  }
+
+  listeners.add(onEvent)
+  try {
+    ({ browserContextId } = await send('Target.createBrowserContext', { disposeOnDetach: true }));
+    ({ targetId } = await send('Target.createTarget', { url: 'about:blank', browserContextId }));
+    ({ sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }))
+    for (const domain of ['Page', 'Runtime', 'Network', 'Log']) await S(`${domain}.enable`)
+    await S('Emulation.setDeviceMetricsOverride', { width: sc.width, height: sc.height, deviceScaleFactor: 1, mobile: Boolean(sc.mobile) })
+    if (sc.mobile) await S('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+    if (sc.userAgent) await S('Emulation.setUserAgentOverride', { userAgent: sc.userAgent })
+    else if (sc.mobile) await S('Emulation.setUserAgentOverride', mobileUserAgent(version.userAgent))
+    for (const source of sc.init) await S('Page.addScriptToEvaluateOnNewDocument', { source })
+    if (sc.mocks.length) {
+      await S('Fetch.enable', { patterns: sc.mocks.map(m => ({ urlPattern: m.url, requestStage: m.mergePatch ? 'Response' : 'Request' })) })
+    }
+  } catch (e) {
+    r.ok = false
+    r.error = { step: -1, action: 'подготовка вкладки', message: e.message }
+  }
+
+  for (const [i, s] of sc.steps.entries()) {
+    if (!r.ok) break
+    step = i
+    const t = Date.now()
+    try {
+      await runStep(s)
+      if (mockError) throw new Error(mockError)
+    } catch (e) {
+      r.ok = false
+      r.error = { step: i, action: describe(s), message: e.message }
+    }
+    r.steps.push({ i, action: describe(s), ms: Date.now() - t })
+  }
+  if (r.ok && mockError) {
+    r.ok = false
+    r.error = { step, action: 'подмена', message: mockError }
+  }
+
+  if (sessionId) {
+    for (const [k, expr] of Object.entries(sc.state ?? {})) {
+      try { r.state[k] = await evaluate(expr) } catch (e) { r.stateErrors[k] = e.message }
+    }
+    if (!r.ok) {
+      try {
+        await screenshot(sc.failShot)
+        r.failShot = sc.failShot
+      } catch { /* вкладка уже недоступна — снимка нет */ }
+    }
+  }
+  listeners.delete(onEvent)
+  for (const [id, e] of requests) {
+    e.mocked = mocked.get(id) ?? null
+    if (sc.network === 'all' || API_TYPES.includes(e.type) || e.mocked || e.failed || e.status >= 400) r.network.push(e)
+  }
+  if (targetId) await send('Target.closeTarget', { targetId }).catch(() => {})
+  if (browserContextId) await send('Target.disposeBrowserContext', { browserContextId }).catch(() => {})
+  r.ms = Date.now() - t0
+  return r
+}
+
+// --- прогон ---------------------------------------------------------------------------------
+
+const t0 = Date.now()
+const version = await send('Browser.getVersion')
+const shown = p => relative(process.cwd(), p).replace(/\\/g, '/') || '.'
+console.log(`browser=${version.product} chrome=${chromePath} profile=${tempProfile ? 'временный' : profile} out=${shown(outFile)}`)
+mkdirSync(dirname(outFile), { recursive: true })
+writeFileSync(outFile, '')
+
+let failed = 0
+for (const sc of run) {
+  const r = await runScenario(sc)
+  appendFileSync(outFile, JSON.stringify(r) + '\n')
+  const sec = `${(r.ms / 1000).toFixed(1)}s`
+  if (r.ok) {
+    console.log(`ok    ${r.name}  ${sec}  steps=${r.steps.length} network=${r.network.length} console=${r.console.length} screenshots=${r.screenshots.length}`)
+  } else {
+    failed++
+    console.log(`FAIL  ${r.name}  ${sec}  шаг ${r.error.step} ${r.error.action}: ${r.error.message}${r.failShot ? `  failShot=${shown(r.failShot)}` : ''}`)
+  }
+}
+console.log(`TOTAL scenarios=${run.length} failed=${failed} time=${((Date.now() - t0) / 1000).toFixed(1)}s out=${shown(outFile)}`)
+await shutdown()
+process.exit(failed ? 1 : 0)

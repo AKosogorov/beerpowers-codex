@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# На Windows используем MSYS2 Make с Bash и передаём нативному PHP TMP и TEMP.
+# На остальных платформах системный make получает исходные аргументы.
+
+set -euo pipefail
+
+help_only=false
+if [[ $# == 1 && $1 == --help ]]; then
+    help_only=true
+    printf '%s\n' 'make-shim [MAKE_OPTIONS] [TARGET...] — запуск Make для текущего проекта.'
+fi
+
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) ;;
+    *)
+        if "$help_only" && ! command -v make >/dev/null; then exit 0; fi
+        exec make "$@"
+        ;;
+esac
+
+msys_root=$(cygpath -u "${BEERPOWERS_MSYS2_ROOT:-C:/msys64}")
+make_bin="$msys_root/usr/bin/make.exe"
+if "$help_only"; then
+    if [[ -x "$make_bin" ]]; then exec "$make_bin" --help; fi
+    exit 0
+fi
+if [[ ! -x "$make_bin" || ! -x "$msys_root/usr/bin/bash.exe" ]]; then
+    printf 'make-shim: не найден Make или Bash из MSYS2 в %s.\n' "$msys_root" >&2
+    printf 'Установите MSYS2 и пакет make (pacman -S make). Для другого каталога задайте BEERPOWERS_MSYS2_ROOT.\n' >&2
+    exit 1
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+shim_mk="$self_dir/lib/make-shim.mk"
+if [[ ! -f "$shim_mk" ]]; then
+    printf 'make-shim: не найден файл %s.\n' "$shim_mk" >&2
+    exit 1
+fi
+
+tmp_dir=${TMP:-${TEMP:-${LOCALAPPDATA:+$LOCALAPPDATA/Temp}}}
+if [[ -z "$tmp_dir" ]]; then
+    printf 'make-shim: не задан временный каталог (TMP, TEMP или LOCALAPPDATA).\n' >&2
+    exit 1
+fi
+tmp_dir=$(cygpath -m "$tmp_dir")
+
+# --eval применяет export перед чтением Makefile, сохраняя обычный выбор файла
+# и явные -f. Путь к поставляемому .mk разрешает Bash.
+exec "$make_bin" "--eval=$(<"$shim_mk")" TMP="$tmp_dir" TEMP="$tmp_dir" "$@"

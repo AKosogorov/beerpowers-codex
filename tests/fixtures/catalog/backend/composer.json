@@ -1,0 +1,6 @@
+{
+  "name": "example/catalog-api",
+  "require": {
+    "laravel/framework": "^12.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "beerpowers-codex",
+  "version": "0.10.0",
+  "description": "Единый вход BeerPowers для Codex: продуктовая и инженерная память, планирование фич, командная разработка, проверки и обновление workspace.",
+  "author": {
+    "name": "kosogorov"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "upstream": {
+    "name": "beerpowers",
+    "version": "2.20.0",
+    "commit": "7c5bb1221d65b5c46c8af96fe7bc4ce979fc596e"
+  },
+  "interface": {
+    "displayName": "BeerPowers для Codex",
+    "shortDescription": "Роли, хуки и разработка от постановки до ревью",
+    "category": "Developer Tools"
+  }
+}

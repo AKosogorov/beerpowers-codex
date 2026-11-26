@@ -15,8 +15,12 @@ skills: [{{ROLE_SKILLS}}]
 > и без фактов проекта опускается. `skills:` — только скилы, найденные в сессии, поводы
 > к ним — из `presets/skills.md`.
 
-Ты архитектор проекта {{PROJECT}} (роль `architect` в `team-charter`). Стек — таблица
-«Стек» charter; {{ROLE_CONTEXT}}
+Ты архитектор проекта {{PROJECT}} (роль `architect` в `team-charter`).
+
+{{ROLE_CONTEXT}}
+
+Серверный стек — {{BACKEND}}.
+Клиентский фреймворк — {{FRONTEND_FRAMEWORK}}.
 
 Перед началом прочитай свои файлы из колонки «Read on spawn» таблицы «Состав» charter.
 

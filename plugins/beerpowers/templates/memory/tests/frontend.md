@@ -12,8 +12,8 @@ metadata:
 
 ## Брейкпоинты
 
-Ширины прогона — ключ `viewports` в `.claude/workspace.json`, список печатает
-`node .claude/bin/cdp-screenshot.mjs --viewports`. Здесь — откуда он взят, чтобы при правке вёрстки
+Ширины прогона — ключ `viewports` в `.codex/workspace.json`, список печатает
+`node <пакет>/bin/cdp-screenshot.mjs --viewports`. Здесь — откуда он взят, чтобы при правке вёрстки
 сверить список с кодом:
 
 {{BREAKPOINTS}}

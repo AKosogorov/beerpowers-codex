@@ -1,23 +1,24 @@
 #!/usr/bin/env node
-// Печатает текст релиза версии — раздел `## <версия> — <дата>` из CHANGELOG.md без заголовка.
-// Зовёт workflow release.yml; раздела нет — выход 1, и релиз без описания не создаётся.
-//
-//   node .github/scripts/release_notes.mjs 2.14.0
+// Печатает непустой раздел `## <версия> — <дата>` из CHANGELOG.md без заголовка.
 import fs from 'node:fs'
 
 const version = process.argv[2]
-if (!version) {
-  console.error('нужна версия: node .github/scripts/release_notes.mjs <версия>')
+if (!/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/.test(version ?? '')) {
+  console.error('Укажите числовую версию: node .github/scripts/release_notes.mjs <версия>')
   process.exit(2)
 }
 
 const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split(/\r?\n/)
-const start = lines.findIndex((line) => line.startsWith(`## ${version} `))
+const prefix = `## ${version} — `
+const start = lines.findIndex((line) => line.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}$/.test(line.slice(prefix.length)))
 if (start < 0) {
   console.error(`в CHANGELOG.md нет раздела «## ${version} — <дата>»`)
   process.exit(1)
 }
-let end = lines.findIndex((line, i) => i > start && line.startsWith('## '))
-if (end < 0) end = lines.length
-
-console.log(lines.slice(start + 1, end).join('\n').trim())
+const end = lines.findIndex((line, i) => i > start && line.startsWith('## '))
+const notes = lines.slice(start + 1, end < 0 ? lines.length : end).join('\n').trim()
+if (!notes) {
+  console.error(`В CHANGELOG.md пустой раздел версии ${version}`)
+  process.exit(1)
+}
+console.log(notes)

@@ -1,0 +1,545 @@
+#!/usr/bin/env node
+// BeerPowers для Codex. Поставляется в установленном пакете.
+//
+// parallel-tests — полный прогон тестов репозитория несколькими процессами с общим лимитом
+// процессов на машину. Настройки — раздел tests файла .codex/workspace.json.
+//
+//   node $packageRoot/bin/parallel-tests.mjs                           # все репозитории из tests.repos
+//   node $packageRoot/bin/parallel-tests.mjs --repos api,shop          # только названные
+//   node $packageRoot/bin/parallel-tests.mjs --repos api --task SHOP-12   # в worktrees/SHOP-12/api
+//   node $packageRoot/bin/parallel-tests.mjs --repos api --workers 4   # не больше 4 слотов
+//   node $packageRoot/bin/parallel-tests.mjs --repos api --dry-run     # раскладка и команды без прогона
+//   node $packageRoot/bin/parallel-tests.mjs --status                  # кто держит слоты машины
+//
+// Без --task репозиторий берётся из projects/<репо>. --out <каталог> — куда писать логи
+// воркеров и сводный junit; по умолчанию .codex/.cache/parallel-tests/runs/<время>-<pid>/,
+// Новый прогон убирает из кеша каталоги прогонов старше семи дней.
+//
+// Слоты — общие на машину, а не на сессию: все прогоны всех сессий машины делят одно число
+// процессов. Лимит — переменная окружения BEERPOWERS_TEST_SLOTS →
+// tests.slots в workspace.json, но не больше ядер этой машины →
+// число логических ядер. Прогон берёт min(запрошено,
+// свободно); свободных нет — ждёт. Запрошено — tests.repos.<репо>.workers или --workers,
+// иначе лимит, поделённый на число репозиториев вызова: репозитории идут одновременно.
+//
+// Номер слота {i} уникален среди одновременных прогонов машины, поэтому тестовая база
+// с {i} в имени не пересекается с базой соседней сессии. Подготовка воркера (prepare) идёт
+// перед тестами каждого прогона — она обязана быть идемпотентной: базу создать, если её нет,
+// миграции применить.
+//
+// Режим split — для раннера без своей параллели (PHPUnit): файлы по маскам files минус exclude делятся на столько групп, сколько слотов
+// получено, жадно по времени из junit прошлого прогона (нет junit — по числу файлов), каждая
+// группа — свой процесс команды с {files}. Командная строка длиннее предела оболочки
+// (cmd.exe на Windows — 8191 знак) режется на несколько запусков подряд в том же воркере.
+// Режим native — для раннера со своей параллелью (Vitest и Jest --maxWorkers={n}): один процесс
+// команды с {n}, один globalSetup на прогон; split умножил бы воркеры раннера и globalSetup на
+// число слотов, об этом строка WARN в начале прогона и в --dry-run. Переменные с {i} получает только подготовка, по разу на слот, а номер воркера
+// фреймворка в номер слота переводит настройка тестов проекта по BEERPOWERS_TEST_SLOTS.
+//
+// Подстановки: {i} — слот воркера, {n} — число слотов прогона, {slots} — их номера через
+// запятую, {repo} — имя репозитория, {dir} — абсолютный путь его рабочего дерева, {root} —
+// корень workspace, {tmp} — пустой временный каталог воркера, {junit} — файл junit запуска,
+// {files} — файлы группы путями от {dir}, {env:ИМЯ} — переменная окружения (личное значение
+// машины — окружение процесса). Пути подставляются как есть: в команде
+// их берут в двойные кавычки. Команда идёт в оболочке системы (cmd.exe на Windows, sh
+// на остальных) из каталога {dir}. Воркер получает и BEERPOWERS_TEST_SLOT, и
+// BEERPOWERS_TEST_SLOTS.
+//
+// Вывод: строка MACHINE — потоки, память и лимит машины, чтобы логи разных машин сравнивались;
+// строка START на репозиторий (с коммитом head=<sha> и tree=clean|dirty — есть ли
+// в дереве незакоммиченное), строка done на воркер, затем итог — REPO на
+// репозиторий, под ней воркеры и упавшие тесты, TOTAL repos=… tests=… failed=… и последней
+// строкой CODE=<код выхода>: 0 — всё зелёное, 1 — упали тесты, подготовка или запуск,
+// 2 — ошибка настроек или аргументов. Полный лог каждого воркера — файлом в каталоге
+// прогона; свои процессы скрипт гасит по своим PID, если его остановили.
+
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { branchName } from './lib/git-repositories.mjs';
+import { findRoot, loadWorkspace, parseTests, workspacePath, localPath, PROJECTS_DIR, WORKTREES_DIR } from './lib/test-workspace.mjs';
+import {
+  UserError, say, fail, SLOTS_DIR, slotLimit, locked, scan, acquire, release, killChildren,
+  installStopHandlers, run as runIn, subst, quote,
+} from './lib/slots.mjs';
+
+const self = fileURLToPath(import.meta.url);
+const argv = process.argv.slice(2);
+
+if (argv.length === 1 && argv[0] === '--check-config') {
+  const problems = [];
+  try {
+    const config = JSON.parse(process.env.BEERPOWERS_PARALLEL_TESTS_JSON ?? '');
+    const repos = fs.readdirSync(PROJECTS_DIR, {withFileTypes: true}).filter(entry => entry.isDirectory());
+    parseTests({tests: config}, repos, problem => problems.push(problem), warning => console.error(warning));
+  } catch (error) {
+    problems.push(error.message);
+  }
+  if (problems.length) console.error(problems.join('\n'));
+  process.exit(problems.length ? 2 : 0);
+}
+
+if (argv.includes('-h') || argv.includes('--help')) {
+  const lines = fs.readFileSync(self, 'utf8').split('\n').slice(2);
+  const end = lines.findIndex((l) => !l.startsWith('//'));
+  process.stdout.write(lines.slice(0, end).map((l) => l.replace(/^\/\/ ?/, '')).join('\n') + '\n');
+  process.exit(0);
+}
+
+const run = (command, o) => runIn(command, { ...o, tool: 'parallel-tests' });
+
+const opts = { repos: null, task: null, workers: null, out: null, dryRun: false, status: false };
+
+function parseArgs() {
+  for (let a = 0; a < argv.length; a++) {
+    const arg = argv[a];
+    const val = () => {
+      const v = argv[++a];
+      if (v === undefined || v.startsWith('--')) fail(`${arg}: нет значения`);
+      return v;
+    };
+    if (arg === '--repos') opts.repos = val().split(',').map((s) => s.trim()).filter(Boolean);
+    else if (arg === '--task') opts.task = val();
+    else if (arg === '--workers') {
+      const n = Number(val());
+      if (!Number.isInteger(n) || n < 1) fail('--workers: ждётся целое больше нуля');
+      opts.workers = n;
+    } else if (arg === '--out') opts.out = val();
+    else if (arg === '--dry-run') opts.dryRun = true;
+    else if (arg === '--status') opts.status = true;
+    else fail(`неизвестный аргумент ${arg} — см. --help`);
+  }
+  if (opts.task !== null) branchName(opts.task, true);
+}
+
+installStopHandlers();
+
+// ---------- маски, junit ----------
+
+function globRe(mask) {
+  let re = '';
+  for (let k = 0; k < mask.length; k++) {
+    const c = mask[k];
+    if (c === '*' && mask[k + 1] === '*') {
+      k++;
+      if (mask[k + 1] === '/') { k++; re += '(?:.*/)?'; } else re += '.*';
+    } else if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`);
+}
+
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'vendor']);
+
+function listFiles(dir, masks, exclude) {
+  const found = new Set();
+  for (const mask of masks) {
+    const segs = mask.split('/');
+    const fixed = [];
+    for (const s of segs) { if (/[*?]/.test(s)) break; fixed.push(s); }
+    const base = fixed.join('/');
+    const abs = base ? workspacePath(dir, base) : dir;
+    if (fixed.length === segs.length) {
+      let st = null;
+      try { st = fs.statSync(abs); } catch { /* нет файла */ }
+      if (st?.isDirectory()) fail(`маска «${mask}» — каталог: нужна маска файлов, например ${base}/**/*Test.php`);
+      if (st?.isFile()) found.add(base);
+      else fail(`маска «${mask}» не нашла файла`);
+      continue;
+    }
+    const re = globRe(mask);
+    const before = found.size;
+    const walk = (d, rel) => {
+      let entries = [];
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(path.join(d, e.name), r); } else if (e.isFile() && re.test(r)) found.add(r);
+      }
+    };
+    walk(abs, base);
+    if (found.size === before) fail(`маска «${mask}» не нашла ни одного файла в ${dir}`);
+  }
+  const ex = exclude.map((e) => (/[*?]/.test(e) ? { re: globRe(e) } : { prefix: e.replace(/\/+$/, '') }));
+  return [...found]
+    .filter((f) => !ex.some((e) => (e.re ? e.re.test(f) : f === e.prefix || f.startsWith(`${e.prefix}/`))))
+    .sort();
+}
+
+const unxml = (s) => s.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const toxml = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const attr = (a, k) => {
+  const m = a.match(new RegExp(`\\b${k}="([^"]*)"`));
+  return m ? unxml(m[1]) : null;
+};
+
+// Разбор без парсера XML: testcase с атрибутами и телом, файл — из атрибута testcase,
+// иначе из ближайшего testsuite с атрибутом file (так пишет PHPUnit для класса).
+function readCases(xml) {
+  const cases = [];
+  let suiteFile = null;
+  const re = /<testsuite\b((?:[^>"]|"[^"]*")*)>|<testcase\b((?:[^>"]|"[^"]*")*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
+  for (const m of xml.matchAll(re)) {
+    if (m[1] !== undefined) { suiteFile = attr(m[1], 'file') ?? suiteFile; continue; }
+    const body = m[3] ?? '';
+    cases.push({
+      raw: m[0],
+      file: attr(m[2], 'file') ?? suiteFile,
+      name: attr(m[2], 'name') ?? '?',
+      classname: attr(m[2], 'classname') ?? attr(m[2], 'class') ?? '',
+      time: Number(attr(m[2], 'time')) || 0,
+      failed: /<(failure|error)\b/.test(body),
+      skipped: /<skipped\b/.test(body),
+    });
+  }
+  return cases;
+}
+
+function relFile(file, dir) {
+  const f = file.replace(/\\/g, '/');
+  const d = `${dir.replace(/\\/g, '/').replace(/\/+$/, '')}/`;
+  const ci = process.platform === 'win32';
+  if ((ci ? f.toLowerCase() : f).startsWith(ci ? d.toLowerCase() : d)) return f.slice(d.length);
+  return f.replace(/^\.\//, '');
+}
+
+function layout(files, weights, k) {
+  const known = files.filter((f) => weights.has(f)).map((f) => weights.get(f));
+  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  const w = (f) => (weights.has(f) ? weights.get(f) : mean);
+  const groups = Array.from({ length: k }, () => ({ t: 0, files: [] }));
+  const order = [...files].sort((a, b) => w(b) - w(a) || (a < b ? -1 : 1));
+  for (const f of order) {
+    let g = groups[0];
+    for (const x of groups) if (x.t < g.t) g = x;
+    g.t += w(f);
+    g.files.push(f);
+  }
+  for (const g of groups) g.files.sort();
+  return { groups, byTime: known.length > 0 };
+}
+
+const CMDLINE_MAX = Number(process.env.BEERPOWERS_TEST_CMDLINE_MAX) || (process.platform === 'win32' ? 8000 : 100_000);
+
+function chunked(files, build) {
+  const out = [];
+  let cur = [];
+  for (const f of files) {
+    const next = [...cur, f];
+    if (cur.length && build(next, out.length + 1).length > CMDLINE_MAX) { out.push(cur); cur = [f]; } else cur = next;
+  }
+  if (cur.length) out.push(cur);
+  out.forEach((c, j) => {
+    if (build(c, j + 1).length > CMDLINE_MAX) fail(`команда с одним файлом ${c[0]} длиннее ${CMDLINE_MAX} знаков`);
+  });
+  return out;
+}
+
+// ---------- прогон репозитория ----------
+
+const sec = (ms) => `${(ms / 1000).toFixed(1)}s`;
+const stamp = () => {
+  const d = new Date();
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+};
+
+const OWN_PARALLEL = /\b(?:vitest|jest|playwright)\b/;
+
+async function runRepo(name, cfg, want, ctx) {
+  const { root, limit, outRoot } = ctx;
+  const dirRel = opts.task ? `${WORKTREES_DIR}/${opts.task}/${name}` : `${PROJECTS_DIR}/${name}`;
+  const dir = workspacePath(root, dirRel);
+  if (!fs.existsSync(dir)) fail(`${name}: нет каталога ${dirRel}`);
+  const res = { name, dirRel, mode: cfg.mode, workers: [], problems: [], failedCases: [], tests: 0, failed: 0, skipped: 0, counted: true };
+  const t0 = Date.now();
+
+  let files = [];
+  let weights = new Map();
+  const cache = workspacePath(root, '.codex/.cache/parallel-tests/' + name + '.junit.xml');
+  if (cfg.mode === 'split') {
+    files = listFiles(dir, cfg.files, cfg.exclude);
+    if (files.length === 0) fail(`${name}: после exclude не осталось файлов`);
+    want = Math.min(want, files.length);
+    try {
+      for (const c of readCases(fs.readFileSync(cache, 'utf8'))) {
+        if (!c.file) continue;
+        const f = relFile(c.file, dir);
+        weights.set(f, (weights.get(f) ?? 0) + c.time);
+      }
+    } catch { weights = new Map(); }
+  }
+
+  let ids;
+  if (opts.dryRun) {
+    const held = scan({ clean: false });
+    const free = Math.max(0, limit.n - held.size);
+    ids = [];
+    for (let s = 1; ids.length < Math.max(1, Math.min(want, free)); s++) if (!held.has(s)) ids.push(s);
+    say(`PLAN ${name} dir=${dirRel} mode=${cfg.mode}${cfg.mode === 'split' ? ` files=${files.length}` : ''} слоты: запрошено ${want}, свободно ${free} из ${limit.n} (${limit.from})${free ? '' : ' — прогон ждал бы'} → ${ids.join(',')}`);
+  } else {
+    ids = await acquire(want, limit, { repo: name, dir: dirRel }, name);
+  }
+
+  const n = ids.length;
+  if (cfg.mode === 'split' && n > 1) {
+    const runner = cfg.command.match(OWN_PARALLEL)?.[0];
+    if (runner) say(`WARN ${name}: у ${runner} своя параллель, а split запустит ${n} процессов раннера — воркеры и globalSetup умножатся на ${n}. Нужен mode native с числом воркеров {n}`);
+  }
+  const repoOut = workspacePath(outRoot, name);
+  if (!opts.dryRun) fs.mkdirSync(repoOut, { recursive: true });
+  const common = { n, slots: ids.join(','), repo: name, dir, root };
+  const envOf = (vars, skipSlot) => {
+    const env = { ...process.env, BEERPOWERS_TEST_SLOTS: common.slots };
+    for (const [k, v] of Object.entries(cfg.env)) {
+      if (skipSlot && /\{i\}/.test(v)) continue;
+      env[k] = subst(v, vars);
+    }
+    if (vars.i !== undefined) env.BEERPOWERS_TEST_SLOT = String(vars.i);
+    return env;
+  };
+  const shownEnv = (env) => Object.keys(cfg.env).filter((k) => k in env).map((k) => `${k}=${env[k]}`).join(' ');
+  const tmpOf = (slot) => workspacePath(repoOut, `tmp-w${slot}`);
+  // Коммит прогона — в строку START: по ней финальный ревью узнаёт, что лог снят с того же
+  // коммита, что уйдёт в MR, а не верит пересказу. dirty — в дереве есть незакоммиченное.
+  const git = (...a) => spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
+  // Каталог без своего репозитория git молча отдал бы коммит внешнего — тогда «?».
+  const top = git('rev-parse', '--show-toplevel');
+  const own = top.status === 0 && path.relative(path.resolve(top.stdout.trim()), path.resolve(dir)) === '';
+  const sha = own ? git('rev-parse', 'HEAD').stdout.trim() || '?' : '?';
+  const tree = sha === '?' ? '?' : git('status', '--porcelain').stdout.trim() ? 'dirty' : 'clean';
+  const at = `head=${sha} tree=${tree}`;
+
+  try {
+    if (cfg.mode === 'split') {
+      const { groups, byTime } = layout(files, weights, n);
+      const wctx = { ...ctx, cfg, dir, repoOut, common, envOf, shownEnv, tmpOf, res, byTime };
+      if (opts.dryRun) {
+        say(`  раскладка ${byTime ? 'по времени из junit прошлого прогона' : 'по числу файлов — junit прошлого прогона нет'}`);
+        for (const [j, g] of groups.entries()) await splitWorker(ids[j], g, wctx);
+      } else {
+        say(`START ${name} dir=${dirRel} ${at} mode=split files=${files.length} slots=${common.slots} раскладка ${byTime ? 'по времени из junit прошлого прогона' : 'по числу файлов'}`);
+        await Promise.all(groups.map((g, j) => splitWorker(ids[j], g, wctx)));
+      }
+    } else {
+      if (!opts.dryRun) say(`START ${name} dir=${dirRel} ${at} mode=native slots=${common.slots}`);
+      await nativeRun(ids, { ...ctx, cfg, dir, repoOut, common, envOf, shownEnv, tmpOf, res });
+    }
+  } finally {
+    if (!opts.dryRun) release(ids);
+  }
+  if (opts.dryRun) return res;
+
+  // Сводный junit: пути файлов — от корня репозитория, чтобы раскладка годилась и для
+  // projects/<репо>, и для любого рабочего дерева того же репозитория.
+  const all = res.workers.flatMap((w) => w.cases);
+  const merged = all.map((c) => c.raw.replace(/\sfile="[^"]*"/, '').replace(/^<testcase\b/, c.file ? `<testcase file="${toxml(relFile(c.file, dir))}"` : '<testcase'));
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n<testsuite name="${toxml(name)}" tests="${all.length}" failures="${all.filter((c) => c.failed).length}" skipped="${all.filter((c) => c.skipped).length}" time="${(all.reduce((a, c) => a + c.time, 0)).toFixed(3)}">\n${merged.join('\n')}\n</testsuite>\n</testsuites>\n`;
+  res.junit = workspacePath(repoOut, 'junit.xml');
+  fs.writeFileSync(res.junit, xml);
+  if (cfg.mode === 'split' && res.counted && all.length) {
+    fs.mkdirSync(path.dirname(cache), { recursive: true });
+    const tmp = localPath(root, `${cache}.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, xml);
+    fs.renameSync(tmp, cache);
+  }
+  res.time = Date.now() - t0;
+  return res;
+}
+
+function collect(w, junits, res) {
+  w.cases = [];
+  for (const j of junits) {
+    let xml;
+    try { xml = fs.readFileSync(j, 'utf8'); } catch { w.problems.push(`junit не записан: ${path.basename(j)}`); res.counted = false; continue; }
+    w.cases.push(...readCases(xml));
+  }
+  w.tests = w.cases.length;
+  w.failed = w.cases.filter((c) => c.failed).length;
+  w.skipped = w.cases.filter((c) => c.skipped).length;
+  res.tests += w.tests;
+  res.failed += w.failed;
+  res.skipped += w.skipped;
+  for (const c of w.cases) if (c.failed) res.failedCases.push({ c, w: w.label });
+}
+
+async function prepareSlot(slot, ctx, log) {
+  const { cfg, dir, common, envOf, tmpOf } = ctx;
+  if (!cfg.prepare) return 0;
+  const vars = { ...common, i: slot, tmp: tmpOf(slot) };
+  const cmd = subst(cfg.prepare, vars);
+  if (opts.dryRun) { say(`     prepare: ${cmd}`); return 0; }
+  return run(cmd, { cwd: dir, env: envOf(vars, false), log });
+}
+
+async function splitWorker(slot, group, ctx) {
+  const { cfg, dir, repoOut, common, envOf, shownEnv, tmpOf, res } = ctx;
+  const vars = { ...common, i: slot, tmp: tmpOf(slot) };
+  const env = envOf(vars, false);
+  const junitOf = (c) => workspacePath(repoOut, `w${slot}-${c}.junit.xml`);
+  const build = (list, c) => subst(cfg.command, { ...vars, junit: junitOf(c), files: list.map(quote).join(' ') });
+  const parts = chunked(group.files, build);
+  const label = `w${slot}`;
+  if (opts.dryRun) {
+    say(`  ${label} slot=${slot} files=${group.files.length}${ctx.byTime ? ` оценка=${group.t.toFixed(1)}s` : ''}`);
+    if (Object.keys(cfg.env).length) say(`     env ${shownEnv(env)}`);
+    await prepareSlot(slot, ctx, null);
+    parts.forEach((p, c) => say(`     run ${c + 1}/${parts.length} (длина ${build(p, c + 1).length} из ${CMDLINE_MAX}): ${subst(cfg.command, { ...vars, junit: junitOf(c + 1), files: `<${p.length} файл.>` })}`));
+    for (const f of group.files) say(`       ${f}`);
+    return;
+  }
+  const w = { label, slot, files: group.files.length, problems: [], log: workspacePath(repoOut, `${label}.log`) };
+  res.workers.push(w);
+  const t0 = Date.now();
+  fs.mkdirSync(vars.tmp, { recursive: true });
+  const log = fs.openSync(w.log, 'w');
+  try {
+    fs.writeSync(log, `# ${res.name} ${label} slot=${slot} files=${group.files.length}\n# env ${shownEnv(env)}\n`);
+    const prep = await prepareSlot(slot, ctx, log);
+    if (prep !== 0) { w.problems.push(`подготовка: код ${prep}`); w.cases = []; w.tests = w.failed = w.skipped = 0; res.counted = false; return; }
+    const junits = [];
+    const codes = [];
+    for (const [c, p] of parts.entries()) {
+      junits.push(junitOf(c + 1));
+      codes.push(await run(build(p, c + 1), { cwd: dir, env, log }));
+    }
+    collect(w, cfg.hasJunit ? junits : [], res);
+    if (!cfg.hasJunit) res.counted = false;
+    const bad = codes.filter((x) => x !== 0);
+    if (bad.length && w.failed === 0) w.problems.push(`код ${bad.join(',')} без упавших тестов в junit — см. лог`);
+    w.code = bad.length ? bad[0] : 0;
+  } finally {
+    fs.closeSync(log);
+    w.time = Date.now() - t0;
+    if (!w.problems.length && !w.failed) fs.rmSync(vars.tmp, { recursive: true, force: true });
+    say(`done ${res.name} ${label} tests=${cfg.hasJunit ? w.tests ?? 0 : '?'} failed=${w.failed ?? 0} time=${sec(w.time)}${w.problems.length ? ` — ${w.problems.join('; ')}` : ''}`);
+  }
+}
+
+async function nativeRun(ids, ctx) {
+  const { cfg, dir, repoOut, common, envOf, shownEnv, tmpOf, res } = ctx;
+  const junit = workspacePath(repoOut, 'native.junit.xml');
+  const vars = { ...common, tmp: tmpOf('all'), junit };
+  const cmd = subst(cfg.command, vars);
+  const env = envOf(vars, true);
+  if (opts.dryRun) {
+    for (const s of ids) {
+      if (!cfg.prepare) break;
+      const pv = { ...common, i: s, tmp: tmpOf(s) };
+      say(`  prepare slot=${s} env ${shownEnv(envOf(pv, false))}`);
+      await prepareSlot(s, ctx, null);
+    }
+    if (Object.keys(cfg.env).length) say(`  env ${shownEnv(env)} BEERPOWERS_TEST_SLOTS=${common.slots}`);
+    say(`  run: ${cmd}`);
+    return;
+  }
+  const w = { label: 'native', slot: common.slots, files: '-', problems: [], log: workspacePath(repoOut, 'native.log') };
+  res.workers.push(w);
+  const t0 = Date.now();
+  fs.mkdirSync(vars.tmp, { recursive: true });
+  const log = fs.openSync(w.log, 'w');
+  try {
+    if (cfg.prepare) {
+      const codes = await Promise.all(ids.map(async (s) => {
+        const plog = fs.openSync(workspacePath(repoOut, `prepare-w${s}.log`), 'w');
+        fs.mkdirSync(tmpOf(s), { recursive: true });
+        try { return await prepareSlot(s, ctx, plog); } finally { fs.closeSync(plog); }
+      }));
+      const bad = ids.filter((_, j) => codes[j] !== 0);
+      if (bad.length) { w.problems.push(`подготовка слотов ${bad.join(',')}: не ноль — prepare-w<слот>.log`); w.cases = []; res.counted = false; return; }
+    }
+    fs.writeSync(log, `# ${res.name} native slots=${common.slots}\n# env ${shownEnv(env)}\n`);
+    const code = await run(cmd, { cwd: dir, env, log });
+    collect(w, cfg.hasJunit ? [junit] : [], res);
+    if (!cfg.hasJunit) res.counted = false;
+    if (code !== 0 && w.failed === 0) w.problems.push(`код ${code} без упавших тестов в junit — см. лог`);
+    w.code = code;
+  } finally {
+    fs.closeSync(log);
+    w.time = Date.now() - t0;
+    for (const s of [...ids, 'all']) if (!w.problems.length && !w.failed) fs.rmSync(tmpOf(s), { recursive: true, force: true });
+    say(`done ${res.name} native tests=${cfg.hasJunit ? w.tests ?? 0 : '?'} failed=${w.failed ?? 0} time=${sec(w.time)}${w.problems.length ? ` — ${w.problems.join('; ')}` : ''}`);
+  }
+}
+
+// ---------- точка входа ----------
+
+async function main() {
+  parseArgs();
+  const root = findRoot();
+  const ws = loadWorkspace(root);
+  const fatals = ws.problems.filter((p) => p.fatal || p.testsFatal);
+  if (fatals.length) fail(fatals.map((p) => `.codex/workspace.json: ${p.msg}`).join('\n'));
+  const rel = (p) => path.relative(root, p).replace(/\\/g, '/');
+
+  const limit = slotLimit(ws);
+
+  if (opts.status) {
+    const held = await locked(() => scan({ clean: false }));
+    say(`слоты: лимит ${limit.n} (${limit.from}), заняты ${held.size}, каталог ${SLOTS_DIR}`);
+    for (const [s, c] of [...held].sort((a, b) => a[0] - b[0])) say(`  slot-${s} pid=${c.pid} repo=${c.repo ?? '?'} dir=${c.dir ?? '?'} с ${c.since ?? '?'}`);
+    return 0;
+  }
+
+  const configured = Object.keys(ws.tests.repos);
+  if (configured.length === 0) fail('в .codex/workspace.json нет tests.repos — настройки прогона по репозиториям, схема в справке плагина');
+  const names = opts.repos ?? configured;
+  if (!names.length || new Set(names).size !== names.length) fail('--repos: ожидается непустой список уникальных репозиториев');
+  const unknown = names.filter((r) => !configured.includes(r));
+  if (unknown.length) fail(`нет настроек в tests.repos: ${unknown.join(', ')} — есть ${configured.join(', ')}`);
+
+  const outRoot = localPath(root, opts.out ?? path.join('.codex', '.cache', 'parallel-tests', 'runs', `${stamp()}-${process.pid}`));
+  if (!opts.dryRun && !opts.out) {
+    const runs = path.dirname(outRoot);
+    try {
+      for (const d of fs.readdirSync(runs)) {
+        if (!/^d{8}-d{6}-d+$/.test(d)) continue;
+        const p = path.join(runs, d);
+        if (fs.lstatSync(p).isDirectory() && Date.now() - fs.statSync(p).mtimeMs > 7 * 24 * 3600 * 1000) fs.rmSync(p, { recursive: true, force: true });
+      }
+    } catch { /* каталога прогонов ещё нет */ }
+  }
+
+  say(`MACHINE потоков=${os.availableParallelism()} память=${Math.round(os.totalmem() / 2 ** 30)}ГБ лимит=${limit.n} (${limit.from})`);
+  const t0 = Date.now();
+  const share = Math.max(1, Math.floor(limit.n / names.length));
+  const start = (name) => {
+    const cfg = ws.tests.repos[name];
+    cfg.hasJunit = [cfg.command, ...Object.values(cfg.env)].some((v) => v.includes('{junit}'));
+    const want = Math.min(limit.n, opts.workers ?? cfg.workers ?? share);
+    return runRepo(name, cfg, want, { root, limit, outRoot });
+  };
+  if (opts.dryRun) {
+    for (const name of names) await start(name);
+    return 0;
+  }
+  const results = await Promise.all(names.map(start));
+
+  let code = 0;
+  for (const r of results) {
+    const problems = r.workers.flatMap((w) => w.problems.map((p) => `${w.label}: ${p}`));
+    const ok = r.failed === 0 && problems.length === 0;
+    if (!ok) code = 1;
+    say(`REPO ${r.name} dir=${r.dirRel} mode=${r.mode} slots=${r.workers.map((w) => w.slot).join(',')} tests=${r.counted ? r.tests : '?'} failed=${r.failed} skipped=${r.skipped} time=${sec(r.time)} status=${ok ? 'ok' : 'fail'}`);
+    for (const w of r.workers) say(`  ${w.label} slot=${w.slot} files=${w.files} tests=${w.tests ?? '?'} failed=${w.failed ?? 0} time=${sec(w.time)} log=${rel(w.log)}${w.problems.length ? ` — ${w.problems.join('; ')}` : ''}`);
+    for (const { c, w } of r.failedCases.slice(0, 30)) say(`  FAIL ${c.classname ? `${c.classname}::` : ''}${c.name} (${w})`);
+    if (r.failedCases.length > 30) say(`  … ещё ${r.failedCases.length - 30} — ${rel(r.junit)}`);
+  }
+  const counted = results.every((r) => r.counted);
+  say(`TOTAL repos=${results.length} tests=${counted ? results.reduce((a, r) => a + r.tests, 0) : '?'} failed=${results.reduce((a, r) => a + r.failed, 0)} time=${sec(Date.now() - t0)} status=${code ? 'fail' : 'ok'} out=${rel(outRoot)}`);
+  return code;
+}
+
+main().then(
+  (code) => { if (!opts.dryRun && !opts.status) say(`CODE=${code}`); process.exit(code); },
+  (e) => {
+    if (e instanceof UserError) process.stderr.write(`parallel-tests: ${e.message}\n`);
+    else process.stderr.write(`parallel-tests: ${e.stack ?? e}\n`);
+    killChildren();
+    say('CODE=2');
+    process.exit(2);
+  },
+);
