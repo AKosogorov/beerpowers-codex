@@ -178,7 +178,12 @@ test('changing a saved guide updates generated pointers and preserves edited tab
   const charter = '.codex/team-charter.md';
   const memory = 'memory/MEMORY.md';
   const commands = 'memory/commands/README.md';
+  const gates = '.codex/quality-gates.txt';
   f.setup('apply');
+  const customGate = '*/projects/demo/src/*.ts|*/worktrees/*/demo/src/*.ts Ручной гейт: git diff --check\r\n';
+  const previousGate = '*/projects/demo/*|*/worktrees/*/demo/* Проверка проекта: git diff --check\r\n';
+  assert.equal(f.read(gates), previousGate.replaceAll('\r\n', '\n'));
+  f.put(gates, customGate + previousGate);
   f.put(memory, f.read(memory) + '\nРучная ссылка [справка](commands/demo.md).\n');
   f.put(commands, f.read(commands).replace('Штатные проверки проекта demo', 'Ручное описание проверок'));
   f.put(charter, f.read(charter).replace(/^(\| `tester` \|.*) \|$/m, '$1, `memory/tests/extra.md` |'));
@@ -189,19 +194,23 @@ test('changing a saved guide updates generated pointers and preserves edited tab
   const options = {BEERPOWERS_TESTS_JSON:JSON.stringify({demo:{guide, command:'make check', source:'Makefile'}})};
   const before = [memory, commands, charter].map(f.read);
   const plan = f.setup('plan', undefined, options);
-  for (const file of [memory, commands, charter]) assert.ok(plan.includes('UPDATE ' + file));
+  for (const file of [memory, commands, charter, gates]) assert.ok(plan.includes('UPDATE ' + file), file);
   const [index, commandIndex, roster] = before;
   f.setup('apply', undefined, options);
   assert.equal(f.read(memory), index.replace('[Проверки demo](commands/demo.md)', '[Проверки demo](commands/api.md)'));
   assert.equal(f.read(commands), commandIndex.replace('[demo.md](demo.md)', '[api.md](api.md)'));
+  const updatedGates = customGate + previousGate.replace('git diff --check', 'make check');
+  assert.equal(f.read(gates), updatedGates);
   assert.equal(f.read(charter), roster.replaceAll('`memory/commands/demo.md`', '`memory/commands/api.md`'));
   assert.match(f.packet('tester'), /FILE memory\/commands\/api\.md sha256=/);
   assert.match(f.setup('apply', undefined, options), /^No changes\.$/m);
   assert.deepEqual(f.update().changes, []);
   const updated = [memory, commands, charter].map(f.read);
   [memory, commands, charter].forEach((file, i) => f.put(file, before[i]));
+  f.put(gates, customGate + previousGate);
   f.setup('apply', undefined, options);
   assert.deepEqual([memory, commands, charter].map(f.read), updated, 'reconciles pointers when the binding was already written');
+  assert.equal(f.read(gates), updatedGates);
 });
 
 test('setup previews and seeds selected discovery notes, preserving manual memory on repeat', t => {
