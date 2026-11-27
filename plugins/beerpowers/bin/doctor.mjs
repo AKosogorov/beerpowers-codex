@@ -9,7 +9,6 @@ import { workspaceCheck } from './lib/update-setup.mjs';
 import { findChrome } from './lib/chrome.mjs';
 import { checkWorkspace } from './workspace-check.mjs';
 import { loadWorkspace as loadTestSettings } from './lib/test-workspace.mjs';
-import { refreshTechDebtIndex } from './tech-debt-index.mjs';
 
 import { showHelp } from './lib/cli-help.mjs';
 
@@ -147,11 +146,7 @@ function inspect() {
   checks.push({id:'usage', ...row('unavailable', {tokens:null, cost:null},
     'Для метрик передай разрешённую выгрузку команде $beerpowers token-audit.')});
 }
-if (process.argv.length === 3 && process.argv[2] === 'tech-debt-index') {
-  console.error('Команда перенесена в $beerpowers tech-debt-index.');
-  refreshTechDebtIndex(root);
-}
-else if (process.argv.length !== 2) { console.error('Usage: node doctor.mjs'); process.exitCode = 2; }
+if (process.argv.length !== 2) { console.error('Usage: node doctor.mjs'); process.exitCode = 2; }
 else {
   inspect();
   console.log(JSON.stringify({workspace:root, checks}, null, 2));

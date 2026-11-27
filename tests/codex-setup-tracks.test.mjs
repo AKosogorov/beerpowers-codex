@@ -129,11 +129,11 @@ test('setup and a new doctor process reuse a short-named project guide', t => {
   f.put('memory/commands/notes.md', '<!--\n## Гейты\n\n- \x60npm --prefix projects/school-landing run build\x60\n-->\n');
   f.put('projects/school-landing/package.json', JSON.stringify({scripts:{typecheck:'tsc', build:'nuxt build'}}));
   const options = {BEERPOWERS_TEST_COMMAND:'npm run typecheck', BEERPOWERS_TEST_SOURCE:'package.json'};
-  f.setup('plan', undefined, options);
+  assert.match(f.setup('plan', undefined, options), /Tests \(cwd projects\/school-landing\): npm run typecheck/);
   f.setup('apply', undefined, options);
   assert.equal(f.read(guide), notes);
   assert.equal(f.has('memory/commands/school-landing.md'), false);
-  assert.match(f.packet('architect'), /FILE memory\/commands\/front\.md sha256=/);
+  assert.match(f.packet('tester'), /FILE memory\/commands\/front\.md sha256=/);
   assert.match(f.setup('doctor', undefined, {BEERPOWERS_TEST_COMMAND:undefined, BEERPOWERS_TEST_SOURCE:undefined}), /Project OK: memory\/commands\/front\.md/);
   assert.deepEqual(f.update().changes, []);
 });
@@ -151,6 +151,26 @@ test('setup still validates an existing Codex command note', t => {
     /memory\/commands\/api\.md: .*command or arguments differ/);
   f.put(path, guide.replace('git diff', 'git\0 diff'));
   assert.throws(() => f.update(), /memory\/commands\/api\.md: .*invalid single-line command/);
+});
+
+test('setup saves a selected Make guide for doctor and the tester packet', t => {
+  const f = fixture(t, 'demo');
+  const guide = 'memory/commands/api.md';
+  const notes = '# Команды API\n\n## Гейты\n\n- `make -C projects/demo check`\n';
+  f.put(guide, notes);
+  f.put('projects/demo/Makefile', 'check:\n\t@echo fixture\n');
+  const options = {BEERPOWERS_TESTS_JSON:JSON.stringify({demo:{guide, command:'make check', source:'Makefile'}})};
+  assert.doesNotMatch(f.setup('plan', undefined, options), /^CREATE memory\/commands\/demo\.md$/m);
+  f.setup('apply', undefined, options);
+  assert.equal(f.read(guide), notes);
+  assert.equal(f.has('memory/commands/demo.md'), false);
+  assert.deepEqual(JSON.parse(f.read('.codex/workspace.json')).commandGuides, {demo:guide});
+  assert.match(f.read('memory/MEMORY.md'), /\]\(commands\/api\.md\)/);
+  f.put('memory/commands/demo.md', '# Другие команды\n');
+  assert.match(f.packet('tester'), /FILE memory\/commands\/api\.md sha256=/);
+  assert.match(f.setup('doctor'), /^Project OK: memory\/commands\/api\.md$/m);
+  assert.match(f.setup('plan', undefined, options), /^No changes\.$/m);
+  assert.deepEqual(f.update().changes, []);
 });
 
 test('setup previews and seeds selected discovery notes, preserving manual memory on repeat', t => {

@@ -322,10 +322,10 @@ function inspect(root) {
       }
       const [, masks, message] = rule;
       for (const mask of masks.split('|')) {
-        const scope = /^(\*\/(?:projects|worktrees\/\*)\/[^/]+\/)\*/.exec(mask)?.[1];
+        const scope = /^(\*\/(?:projects|worktrees\/\*)\/[^/]+\/)/.exec(mask)?.[1];
         if (seen.has(mask)) problems.push(file + ':' + (index + 1) + ': повтор маски из строки ' + seen.get(mask) + ': ' + mask);
         else if (scope && mask !== scope + '*' && seen.has(scope + '*')) {
-          problems.push(file + ':' + (index + 1) + ': маска скрыта общим правилом из строки ' + seen.get(scope + '*'));
+          problems.push(file + ':' + (index + 1) + ': маска скрыта общим правилом из строки ' + seen.get(scope + '*') + ': ' + mask);
         }
         if (!seen.has(mask)) seen.set(mask, index + 1);
         if (!scope) continue;

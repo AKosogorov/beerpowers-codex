@@ -79,9 +79,6 @@ test('local marketplace package from a temporary versioned cache (Desktop instal
       assert.deepEqual(route('$beerpowers ' + name), { status: 'route', path: `commands/${name}.md`, tail: '' });
     }
     assert.deepEqual(route('[$beerpowers](skill://beerpowers) setup'), { status: 'route', path: 'commands/setup.md', tail: '' });
-    assert.deepEqual(route('$beerpowers doctor tech-debt-index'), {
-      status: 'route', path: 'commands/tech-debt-index.md', tail: '',
-    });
     assert.deepEqual(route('  $beerpowers task-start  --preview  пример\nвторая строка'), {
       status: 'route', path: 'commands/task-start.md', tail: '  --preview  пример\nвторая строка',
     });

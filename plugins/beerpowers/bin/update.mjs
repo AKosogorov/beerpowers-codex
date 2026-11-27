@@ -139,10 +139,11 @@ function migrateText(text, path, file, name, from, to, previous) {
     actions.push('replace ' + name);
   }
   if (name === 'codex-memory' && current) {
-    const oldJournal = /^(- \[Журнал уроков\]\(retro-log\.md\) — приёмы, которые стоит повторять; раздел «Прецеденты правил» — даты и задачи, на которых написаны правила charter и )\x60team-lead\.md\x60(?=\r?$)/m;
-    const revised = after.replace(oldJournal, '$1\x60.codex/team-lead.md\x60');
-    if (revised !== after) {
-      after = revised;
+    const oldJournal = /^(- \[Журнал уроков\]\(retro-log\.md\) — приёмы, которые стоит повторять; раздел «Прецеденты правил» — даты и задачи, на которых написаны правила charter и )\x60team-lead\.md\x60$/;
+    const journals = [...markupLines(after)].filter(({content}) => oldJournal.test(content));
+    if (journals.length === 1) {
+      const {content, start, end} = journals[0];
+      after = after.slice(0, start) + content.replace(oldJournal, '$1\x60.codex/team-lead.md\x60') + after.slice(end);
       actions.push('fix generated retro index path');
     }
   }

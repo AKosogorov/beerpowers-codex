@@ -164,6 +164,8 @@ test('update plans against the manifest and preserves manual bytes, custom setti
   assert.ok(after[charter].includes(unknownBlock));
   assert.match(after[charter].replace(unknownBlock, ''), /<!-- beerpowers:engine [\w-]+ -->/);
   assert.ok(after['AGENTS.md'].includes('Перед изменением прочитай задачу.\n'));
+  assert.match(after['AGENTS.md'], /Вложенные \x60AGENTS\.md\x60.*только по явному запросу/);
+  assert.match(after['AGENTS.md'], /Автопамять для них не используй/);
   assert.ok(after['AGENTS.md'].includes('Хвост файла.\n'));
   assert.deepEqual(JSON.parse(after[workspace]), { ...legacyState, beerpowers: targetVersion });
   const repeat = ws.plan();
@@ -193,6 +195,20 @@ test('examples of engine markers and charter stamps inside fences stay byte-iden
   ws.put(charter, example + ws.read(charter));
   ws.apply(ws.plan().planId);
   assert.ok(ws.read(charter).includes(example));
+  assert.deepEqual(ws.plan().changes, []);
+});
+
+test('update fixes the journal pointer in prose and preserves its fenced example', t => {
+  const ws = fixture(t);
+  ws.apply(ws.plan().planId);
+  const index = 'memory/MEMORY.md';
+  const canonical = readFileSync(join(packageRoot, 'templates/memory/MEMORY.md'), 'utf8')
+    .match(/<!-- beerpowers:engine codex-memory -->[\s\S]*?<!-- \/beerpowers:engine -->/)[0];
+  const journal = '- [Журнал уроков](retro-log.md) — приёмы, которые стоит повторять; раздел «Прецеденты правил» — даты и задачи, на которых написаны правила charter и `team-lead.md`';
+  const example = '~~~markdown\r\n' + journal + '\r\n~~~\r\n';
+  ws.put(index, example + '\r\n' + journal + '\r\n\r\n' + canonical + '\r\n');
+  ws.apply(ws.plan().planId);
+  assert.equal(ws.read(index), example + '\r\n' + journal.replace('team-lead.md', '.codex/team-lead.md') + '\r\n\r\n' + canonical + '\r\n');
   assert.deepEqual(ws.plan().changes, []);
 });
 
