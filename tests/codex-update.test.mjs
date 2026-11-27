@@ -212,6 +212,22 @@ test('update fixes the journal pointer in prose and preserves its fenced example
   assert.deepEqual(ws.plan().changes, []);
 });
 
+test('update changes the generated debt commands while preserving quoted historical commands', t => {
+  const ws = fixture(t);
+  ws.apply(ws.plan().planId);
+  const index = 'memory/MEMORY.md';
+  const active = readFileSync(join(packageRoot, 'templates/memory/MEMORY.md'), 'utf8')
+    .replace(/^{{OWNERS_EXTRA}}\r?\n?/m, '').replaceAll('\r\n', '\n');
+  const oldCall = '`doctor.mjs tech-debt-index`';
+  const currentCall = '`$beerpowers tech-debt-index`';
+  const historic = '~~~markdown\n' + active.split('\n').find(line => line.includes(currentCall))
+    .replace(currentCall, oldCall) + '\n~~~\n\nРучная запись о старом прогоне: ' + oldCall + '.\n';
+  ws.put(index, (active.replaceAll(currentCall, oldCall) + '\n' + historic).replaceAll('\n', '\r\n'));
+  ws.apply(ws.plan().planId);
+  assert.equal(ws.read(index), (active + '\n' + historic).replaceAll('\n', '\r\n'));
+  assert.deepEqual(ws.plan().changes, []);
+});
+
 test('partial migration resumes with the old version stamp and no duplicate blocks', t => {
   const reference = fixture(t);
   reference.apply(reference.plan().planId);
