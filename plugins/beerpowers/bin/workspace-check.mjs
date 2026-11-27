@@ -122,7 +122,7 @@ function inspect(root) {
       if (!Object.hasOwn(settings.repos, repo)) problems.push(source + ': отсутствует профиль ' + repo);
     }
     for (const [repo, profile] of Object.entries(settings.repos)) {
-      if (!repos.includes(repo)) problems.push(source + ': неизвестный продукт ' + repo);
+      if (!repos.includes(repo)) problems.push(source + ': неизвестный проект ' + repo);
       if (!modes.includes(profile)) problems.push(source + ': неверный профиль ' + repo);
     }
     const local = '.codex/git-settings.local.json';
@@ -139,7 +139,7 @@ function inspect(root) {
     if (git(root, ['ls-files', '--', 'projects/', 'worktrees/'])) problems.push('Внешний Git отслеживает projects/ или worktrees/');
     for (const name of names) {
       const product = 'projects/' + name;
-      if (!SAFE_NAME.test(name)) problems.push(product + ': имя продукта вне [A-Za-z0-9_.-]');
+      if (!SAFE_NAME.test(name)) problems.push(product + ': имя проекта вне [A-Za-z0-9_.-]');
       else if (git(workspacePath(root, product), ['rev-parse', '--show-prefix'], true) !== '') {
         problems.push(product + ': недействительный checkout Git');
       }
@@ -168,7 +168,7 @@ function inspect(root) {
       const cfg = config(source);
       const validList = (list, values) => Array.isArray(list) && new Set(list).size === list.length &&
         list.every(item => values.includes(item));
-      if (!validList(cfg.stacks, stacks) || !isObject(cfg.rules) ||
+      if (('stacks' in cfg && !validList(cfg.stacks, stacks)) || !isObject(cfg.rules) ||
           ('team' in cfg && (!validList(cfg.team, [...roles, 'implementer']) || !cfg.team.length))) throw Error('Неверная схема ' + source);
       for (const [name, dirs] of Object.entries(cfg.rules)) {
         const file = '.codex/rules/' + name + '.md';
@@ -184,9 +184,9 @@ function inspect(root) {
       for (const file of briefs) {
         if (!stat(file)?.isFile() || !text(file).trim()) throw Error('Отсутствует или пуст файл ' + file);
       }
-      evidence[repo] = {source, stacks:cfg.stacks, rules:cfg.rules};
+      evidence[repo] = {source, ...(cfg.stacks === undefined ? {} : {stacks:cfg.stacks}), rules:cfg.rules};
     }
-    if (!productsFound.length) throw Error('Каталоги продуктов не найдены');
+    if (!productsFound.length) throw Error('Каталоги проектов не найдены');
     return row('pass', evidence);
   }
 
@@ -204,12 +204,17 @@ function inspect(root) {
   }
 
   function sharedSettings() {
-    const names = ['.codex/workspace.json', '.codex/git-settings.json', '.codex/role-settings.json', '.codex/barriers.json',
+    const names = ['AGENTS.md', ...charter, index, '.codex/workspace.json', '.codex/git-settings.json', '.codex/role-settings.json', '.codex/barriers.json',
       '.codex/quality-gates.txt', ...products().map(repo => '.codex/role-settings/' + repo + '.json')];
     const matches = ignored(names);
     const tracked = new Set(git(root, ['ls-files', '-z', '--', ...names]).split('\0'));
-    return issues(files(names).filter(name => matches.has(name) && !tracked.has(name))
-      .map(name => name + ': общий файл игнорируется Git'));
+    const problems = files(names).filter(name => matches.has(name) && !tracked.has(name))
+      .map(name => name + ': общий файл игнорируется Git');
+    const broad = /^\/\.\*(?:\/(?:settings\.local\.json|git-settings\.local\.json|figma-settings\.json|yandex-tracker-settings\.json|\.cache\/?)?)?[ \t]*\r?$/m;
+    if (stat('.gitignore')?.isFile() && broad.test(text('.gitignore'))) {
+      problems.push('.gitignore: общая маска скрытых путей /.*; укажи конкретные каталоги');
+    }
+    return issues(problems);
   }
 
   function qaSettings() {
@@ -232,7 +237,7 @@ function inspect(root) {
         if (shared && entry.isDirectory() && entry.name === 'repos') {
           for (const repo of entries(file)) {
             if (repo.isDirectory() && SAFE_NAME.test(repo.name)) scope(file + '/' + repo.name, code, false);
-            else problems.push(file + '/' + repo.name + ': ожидается каталог продукта');
+            else problems.push(file + '/' + repo.name + ': ожидается каталог проекта');
           }
         } else problems.push(file + ': артефакт вне списка');
       }
@@ -264,11 +269,79 @@ function inspect(root) {
         const dir = base + '/' + role.name;
         if (!role.isDirectory()) { problems.push(dir + ': ожидается каталог роли'); continue; }
         for (const entry of entries(dir)) {
-          if (!entry.isFile() || !/^(?:MEMORY\.md|feedback_[^\\/]+\.md)$/.test(entry.name)) problems.push(dir + '/' + entry.name);
+          const file = dir + '/' + entry.name;
+          if (!entry.isFile() || !/^(?:MEMORY\.md|feedback_[^\\/]+\.md)$/.test(entry.name)) problems.push(file);
+          else if (entry.name === 'MEMORY.md') {
+            const lines = prose(text(file));
+            const policies = lines.filter(line => /^(?:Сохраняй (?:в этот индекс )?только явную обратную связь|Сюда\s*[—–-]\s*только.*feedback_)/i.test(line));
+            if (policies.length > 1 || lines.filter(line => /^# Память роли(?:\s|$)/.test(line)).length > 1) {
+              problems.push(file + ': повтор инструкции памяти роли');
+            }
+          }
         }
       }
     }
     return issues(problems);
+  }
+
+  function instructionDuplicates() {
+    const documents = [...files(charter), ...markdown('.codex/agents')];
+    return issues(documents.flatMap(file => {
+      const seen = new Set();
+      return prose(text(file)).flatMap((line, index) => {
+        const heading = /^(?:#{1,2})\s+(.+?)\s*#*\s*$/.exec(line)?.[1];
+        const introduction = /^Ты\s+[^.!?]+?\s+проекта\s+[^.!?]+/iu.exec(line)?.[0];
+        const value = heading ?? introduction;
+        if (!value) return [];
+        const key = value.replace(/[\s\x60*]+/g, ' ').trim().toLowerCase();
+        if (seen.has(key)) return [file + ':' + (index + 1) + ': повтор «' + value + '»'];
+        seen.add(key);
+        return [];
+      });
+    }));
+  }
+
+  function entryPolicy() {
+    return issues(files(['AGENTS.md', 'AGENTS.override.md']).flatMap(file =>
+      prose(text(file)).some(line => /^\s*[-*]\s+\x60?(?:Bash|Read|Edit|Write)\([^)]*\)\x60?\s*$/.test(line))
+        ? [file + ': маски разрешений Claude Code в проектной инструкции'] : []));
+  }
+
+  function qualityGates() {
+    const file = '.codex/quality-gates.txt';
+    if (!stat(file)?.isFile()) return issues([]);
+    const seen = new Map();
+    const checked = new Map();
+    const problems = [];
+    for (const [index, line] of text(file).split(/\r?\n/).entries()) {
+      if (/^\s*(?:#|$)/.test(line)) continue;
+      const rule = /^\s*(\S+)\s+(\S.*)$/.exec(line);
+      if (!rule || rule[1].split('|').some(mask => !mask)) {
+        problems.push(file + ':' + (index + 1) + ': ожидаются маска и напоминание');
+        continue;
+      }
+      const [, masks, message] = rule;
+      for (const mask of masks.split('|')) {
+        const scope = /^(\*\/(?:projects|worktrees\/\*)\/[^/]+\/)\*/.exec(mask)?.[1];
+        if (seen.has(mask)) problems.push(file + ':' + (index + 1) + ': повтор маски из строки ' + seen.get(mask) + ': ' + mask);
+        else if (scope && mask !== scope + '*' && seen.has(scope + '*')) {
+          problems.push(file + ':' + (index + 1) + ': маска скрыта общим правилом из строки ' + seen.get(scope + '*'));
+        }
+        if (!seen.has(mask)) seen.set(mask, index + 1);
+        if (!scope) continue;
+        const general = /^Проверка (?:продукта|проекта): (.+)$/.exec(message)?.[1];
+        const specific = /^Проверь (?:компоненты и типы|повторный запуск миграции|PHP|миграцию базы): (.+)$/.exec(message)?.[1];
+        if (general && mask === scope + '*') {
+          const first = checked.get(scope)?.get(general);
+          if (first) problems.push(file + ':' + (index + 1) + ': та же команда в общем правиле и в строке ' + first);
+        }
+        if (specific && mask !== scope + '*') {
+          if (!checked.has(scope)) checked.set(scope, new Map());
+          if (!checked.get(scope).has(specific)) checked.get(scope).set(specific, index + 1);
+        }
+      }
+    }
+    return issues([...new Set(problems)]);
   }
 
   function ruleOwners() {
@@ -327,10 +400,13 @@ function inspect(root) {
     'tech-debt-index': () => {
       const evidence = techDebtIndex(root);
       const action = evidence.mode === 'manual' ? 'Добавь ссылки на перечисленные пункты.'
-        : 'После сверки пунктов запусти doctor.mjs tech-debt-index.';
+        : 'После сверки пунктов запусти $beerpowers tech-debt-index.';
       return row(evidence.current ? 'pass' : 'fail', evidence, evidence.current ? undefined : action);
     },
     'role-memory': roleMemory,
+    'instruction-duplicates': instructionDuplicates,
+    'entry-policy': entryPolicy,
+    'quality-gates': qualityGates,
     'script-paths': () => issues(stat('.codex/scripts') ? ['.codex/scripts/'] : []),
     'barriers': barriers,
     'shared-settings': sharedSettings,
@@ -338,7 +414,7 @@ function inspect(root) {
       const file = 'AGENTS.override.md';
       if (!stat(file)?.isFile()) return issues([]);
       const body = prose(text(file)).join('\n');
-      return issues(body.trim() && ![...charter, 'role-packet'].every(entry => body.includes(entry)) ? [file] : [], 'warn');
+      return issues(body.trim() && !charter.every(entry => body.includes(entry)) ? [file] : [], 'warn');
     },
     'rule-owners': ruleOwners,
     'rule-snapshots': ruleSnapshots,
@@ -348,8 +424,8 @@ function inspect(root) {
 
 const checks = [
   ['workspace-config', 'Схема .codex/workspace.json', 'Сверь поля с настройками workspace.'],
-  ['git-settings', 'Профили продуктов и приватность личных настроек Git', 'Сверь профили продуктов и корневой .gitignore.'],
-  ['product-checkouts', 'Внешний Git и репозитории в projects/', 'Открой внешний Git workspace и проверь названия продуктов.'],
+  ['git-settings', 'Профили проектов и приватность личных настроек Git', 'Сверь профили проектов и корневой .gitignore.'],
+  ['product-checkouts', 'Внешний Git и репозитории в projects/', 'Открой внешний Git workspace и проверь названия проектов.'],
   ['checkout-ignores', 'Каталоги projects/ и worktrees/ в корневом .gitignore', 'Добавь правила в корневой .gitignore.'],
   ['memory-links', 'Ссылки в памяти и проектных инструкциях', 'Исправь ссылки в указанных файлах.'],
   ['template-slots', 'Подстановка шаблонов в уставе, ролях, правилах и памяти', 'Заполни указанные слоты.'],
@@ -357,6 +433,9 @@ const checks = [
   ['role-settings', 'Брифы, выбор команды, стеки и правила по путям', 'Проверь .codex/role-settings.json, брифы и проектные правила.'],
   ['tech-debt-index', 'Актуальность индекса техдолга', 'Проверь пункты и границы блока в memory/tech-debt/tech-debt.md.'],
   ['role-memory', 'Формат каталогов памяти ролей', 'Оставь MEMORY.md и feedback_*.md в каталогах ролей.'],
+  ['instruction-duplicates', 'Повтор разделов и вступлений в инструкциях', 'Объедини повторяющиеся разделы, сохрани проектные уточнения.'],
+  ['entry-policy', 'Маски Claude Code во входных инструкциях', 'Перенеси проектные ограничения к их владельцам и проверь исполняемый механизм отдельно.'],
+  ['quality-gates', 'Дубли и формат напоминаний о гейтах', 'Сверь порядок масок и оставь профильные проверки перед общими.'],
   ['script-paths', 'Пути проектных скриптов', 'Сверь пути скриптов в .codex/scripts/ с .codex/bin/.'],
   ['barriers', 'Схема .codex/barriers.json', 'Сверь переключатели с reference/hooks.md.'],
   ['shared-settings', 'Доступность общих настроек для Git', 'Сверь правила игнорирования общих настроек.'],

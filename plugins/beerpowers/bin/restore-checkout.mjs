@@ -8,7 +8,7 @@ showHelp('restore-checkout.mjs REPO TASK');
 function restore(name, task) {
   branchName(task, true);
   const repo = discover().find(r => r.name === name);
-  if (!repo) fail('Неизвестный продукт');
+  if (!repo) fail('Неизвестный проект');
   const cwd = safe(repo.path);
   const { defaultBranch, heads } = remoteState(repo);
   const previous = git(cwd, ['symbolic-ref', '--short', 'HEAD']);

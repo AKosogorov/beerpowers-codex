@@ -119,6 +119,25 @@ test('setup validates a legacy npm gate, its arguments and source without runnin
     /memory\/commands\/api\.md: .*scripts\.build.*package\.json/);
 });
 
+test('setup and a new doctor process reuse a short-named project guide', t => {
+  const f = fixture(t, 'school-landing');
+  const guide = 'memory/commands/front.md';
+  const notes = '# Команды\n\n## Запуск\n\nВерсия Node из Dockerfile.\n\n## Гейты\n\n' +
+    '- `npm --prefix projects/school-landing run typecheck > <лог> 2>&1; echo CODE=$? >> <лог>`\n' +
+    '- `npm --prefix projects/school-landing run build`\n\n## Линт\n';
+  f.put(guide, notes);
+  f.put('memory/commands/notes.md', '<!--\n## Гейты\n\n- \x60npm --prefix projects/school-landing run build\x60\n-->\n');
+  f.put('projects/school-landing/package.json', JSON.stringify({scripts:{typecheck:'tsc', build:'nuxt build'}}));
+  const options = {BEERPOWERS_TEST_COMMAND:'npm run typecheck', BEERPOWERS_TEST_SOURCE:'package.json'};
+  f.setup('plan', undefined, options);
+  f.setup('apply', undefined, options);
+  assert.equal(f.read(guide), notes);
+  assert.equal(f.has('memory/commands/school-landing.md'), false);
+  assert.match(f.packet('architect'), /FILE memory\/commands\/front\.md sha256=/);
+  assert.match(f.setup('doctor', undefined, {BEERPOWERS_TEST_COMMAND:undefined, BEERPOWERS_TEST_SOURCE:undefined}), /Project OK: memory\/commands\/front\.md/);
+  assert.deepEqual(f.update().changes, []);
+});
+
 test('setup still validates an existing Codex command note', t => {
   const f = fixture(t);
   const path = 'memory/commands/api.md';
@@ -168,7 +187,7 @@ test('setup previews and seeds selected discovery notes, preserving manual memor
   assert.match(f.read('.codex/team-charter.md'), /## Intake-режим\s+Intake: plan/);
   assert.match(f.read('.codex/team-lead.md'), /Сверь контрольный заказ\./);
   assert.match(f.read('memory/MEMORY.md'), /Сверяй статус заказа/);
-  assert.match(f.read('memory/commands/README.md'), /\| \[api\.md\]\(api\.md\) \| Штатные проверки репозитория api \| Роли этого продукта и тимлид \|/);
+  assert.match(f.read('memory/commands/README.md'), /\| \[api\.md\]\(api\.md\) \| Штатные проверки проекта api \| Роли этого проекта и тимлид \|/);
   assert.deepEqual(JSON.parse(f.read('.codex/workspace.json')).tests, parallel);
   assert.doesNotMatch(f.read('memory/project/safety-rules.md'), /## Проектные запреты/);
   assert.match(f.read('memory/commands/api.md'), /```text\ngit diff --check\n```\n\n## Памятка команд/);
@@ -223,7 +242,7 @@ test('PM-only setup delivers project identity, confirmed slots and table rows fo
   assert.match(charter, /## Назначение\s+Продажа товаров\.\s+## Стек/);
   assert.match(charter, /## Стек\s+Таблица подтверждённого стека\.\s+## Команды/);
   assert.match(charter, /## Команды\s+Единый указатель команд продукта\.\s+## Состав/);
-  assert.match(charter, /\| Роль \| Продукты \| Read on spawn \|/);
+  assert.match(charter, /\| Роль \| Проекты \| Read on spawn \|/);
   assert.match(charter, /\| `product` \| api, web \|/);
   const roster = charter.match(/^## Состав\n([\s\S]*?)^## /m)[1];
   assert.doesNotMatch(roster, /^\| `reviewer` \|/m);

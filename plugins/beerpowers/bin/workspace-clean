@@ -207,7 +207,7 @@ async function main() {
     const leftovers = unregistered.map(rel => {
       if (!orphan) fail(`${rel} осиротел. Для уборки явно передай --orphan`);
       if (allCheckouts(rel).length) fail(`в ${rel} находятся другие рабочие деревья`);
-      return orphanRemoval(rel) ?? fail(`${rel} содержит Git-метаданные вне регистрации продукта`);
+      return orphanRemoval(rel) ?? fail(`${rel} содержит Git-метаданные вне регистрации проекта`);
     });
     const registered = dirs.filter(registeredAt);
     if (confirmed && (leftovers.length || !registered.length)) fail('состав worktree изменился после предварительного плана');

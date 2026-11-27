@@ -59,14 +59,17 @@ my %legacy = (
 );
 put($_, $legacy{$_}) for keys %legacy;
 put('AGENTS.md', $legacy_agent);
-is((run('plan'))[0], 0, 'legacy 0.5 plan accepts manual files');
+my ($plan_code, $preview) = run('plan');
+is($plan_code, 0, 'legacy 0.5 plan accepts manual files');
+like($preview, qr{Detected stacks \(projects/demo\): elasticsearch, gitlab, laravel, nuxt, postgres, supabase},
+    'plan detects all six stacks from tracked manifests');
 ok(!-e '.codex/role-settings.json', 'plan read only');
 is((run('apply'))[0], 0, 'upgrade fills missing 0.6 files');
 is(bytes($_), $legacy{$_}, "preserves $_") for sort keys %legacy;
-like(bytes('AGENTS.md'), qr/^\Q$legacy_agent\E\r\n/, 'extends existing entry after manual bytes');
+is(bytes('AGENTS.md'), $legacy_agent, 'short entry preserves manual bytes');
 my $cfg = decode_json(bytes('.codex/role-settings.json'));
-like(bytes('.codex/quality-gates.txt'),qr/\.vue\|[^\n]*\.ts [^\n]*git diff --check/, 'generated Nuxt gate carries the saved check');
-is_deeply($cfg->{stacks}, [qw(elasticsearch gitlab laravel nuxt postgres supabase)], 'all six stacks detected from manifests');
+like(bytes('.codex/quality-gates.txt'),qr{\*/projects/[^/]+/\*\|\*/worktrees/\*/[^/]+/\* Проверка проекта: git diff --check}, 'one generated gate covers both checkout layouts');
+ok(!exists $cfg->{stacks}, 'stack discovery has no duplicate JSON field');
 is_deeply($cfg->{rules}, {}, 'framework detection does not invent domain rules');
 ok(!-d '.codex/rules', 'setup ships no generic path rules');
 my %picked = (

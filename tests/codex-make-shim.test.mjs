@@ -90,7 +90,7 @@ test('documented PowerShell command runs make-shim from the recorded checkout an
   const { root, cwd, shim } = checkout(t);
   writeFileSync(join(cwd, 'Makefile'), 'SHELL := /bin/bash\ncheck:\n\t@pwd\n\t@exit 23\n');
   const runtime = readFileSync(join(packageDir, 'reference/command-runtime.md'), 'utf8');
-  const example = runtime.split('## Проверки продукта через Make')[1].match(/```powershell\r?\n([\s\S]*?)\r?\n```/)[1];
+  const example = runtime.split('## Проверки проекта через Make')[1].match(/```powershell\r?\n([\s\S]*?)\r?\n```/)[1];
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', [
     '$packageRoot = $env:MAKE_SHIM_TEST_PACKAGE; $checkout = $env:MAKE_SHIM_TEST_CHECKOUT',
     example,

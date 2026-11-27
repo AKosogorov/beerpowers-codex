@@ -4,7 +4,7 @@
 
 ## Возврат и формат
 
-Выбери короткий ASCII slug в kebab-case, например `saved-products`. При возврате используй прежний slug. Во внешнем репозитории документы фичи лежат в `docs/features/<slug>/`, указатели на них в `memory/decisions.md`. Из `projects/<repo>/` бери факты о продукте. Из корня workspace запусти [чтение состояния](../bin/feature-pm.mjs) с путём к проверенному пакету из единого навыка. Подготовь `$node` по [инструкции выбора Node](../reference/node-runtime.md).
+Выбери короткий ASCII slug в kebab-case, например `saved-products`. При возврате используй прежний slug. Во внешнем репозитории документы фичи лежат в `docs/features/<slug>/`, указатели на них в `memory/decisions.md`. Из `projects/<repo>/` бери факты о проекте. Из корня workspace запусти [чтение состояния](../bin/feature-pm.mjs) с путём к проверенному пакету из единого навыка. Подготовь `$node` по [инструкции выбора Node](../reference/node-runtime.md).
 
 ```powershell
 & $node (Join-Path $packageRoot 'bin/feature-pm.mjs') $slug
@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Check the reported feature artifact' }
 
 ## Подготовка
 
-Проверь PM-секцию устава и бриф product. При их отсутствии сначала подключи PM-дорожку через [setup](setup.md). Для действующего продукта прочитай его пользовательскую карту, акторов, глоссарий и метрики. Если этой памяти ещё нет, назови доступный [product-onboard](product-onboard.md) и продолжи по имеющимся источникам.
+Проверь PM-секцию устава и бриф product. При их отсутствии сначала подключи PM-дорожку через [setup](setup.md). Для действующего проекта прочитай его пользовательскую карту, акторов, глоссарий и метрики. Если этой памяти ещё нет, назови доступный [product-onboard](product-onboard.md) и продолжи по имеющимся источникам.
 
 ## Intake и выбор трека
 

@@ -13,7 +13,7 @@ function plan(name, stand, base, old, baseSha) {
     fail('Ожидаются имя стенда без слеша и два исходных SHA');
   }
   const repo = discover().find(r => r.name === name);
-  if (!repo) fail('Продукт не найден');
+  if (!repo) fail('Проект не найден');
   const state = remoteState(repo);
   if ([base, state.defaultBranch, 'master', 'main'].includes(stand)) fail('Защищённая ветка');
   const cwd = safe(repo.path);

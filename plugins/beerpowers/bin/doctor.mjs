@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { loadWorkspace, workspacePath } from './lib/ui-workspace.mjs';
 import { workspaceCheck } from './lib/update-setup.mjs';
 import { findChrome } from './lib/chrome.mjs';
-import { techDebtIndex } from './lib/tech-debt-index.mjs';
 import { checkWorkspace } from './workspace-check.mjs';
 import { loadWorkspace as loadTestSettings } from './lib/test-workspace.mjs';
+import { refreshTechDebtIndex } from './tech-debt-index.mjs';
 
 import { showHelp } from './lib/cli-help.mjs';
 
-showHelp('doctor.mjs [tech-debt-index]', ['tech-debt-index']);
+showHelp('doctor.mjs');
 
 const pkg = fileURLToPath(new URL('../', import.meta.url));
 const root = realpathSync.native('.');
@@ -53,7 +53,7 @@ function inspect() {
   check('workspace', 'Проверь внешний Git, источники команд проекта и состояние setup.', () => {
     const out = workspaceCheck(root, pkg, 'doctor');
     const confirmed = out.split(/\r?\n/).filter(line => line.startsWith('Project OK: '));
-    if (!confirmed.length) throw Error('Нет подтверждённых продуктов в выводе workspace.pl doctor');
+    if (!confirmed.length) throw Error('Нет подтверждённых проектов в выводе workspace.pl doctor');
     return row('pass', confirmed);
   });
   check('migration', 'Сверь указанный файл и выполни $beerpowers update для просмотра плана.', () => {
@@ -148,10 +148,10 @@ function inspect() {
     'Для метрик передай разрешённую выгрузку команде $beerpowers token-audit.')});
 }
 if (process.argv.length === 3 && process.argv[2] === 'tech-debt-index') {
-  try { console.log(JSON.stringify(techDebtIndex(root, true), null, 2)); }
-  catch (error) { console.error(error.message); process.exitCode = 1; }
+  console.error('Команда перенесена в $beerpowers tech-debt-index.');
+  refreshTechDebtIndex(root);
 }
-else if (process.argv.length !== 2) { console.error('Usage: node doctor.mjs [tech-debt-index]'); process.exitCode = 2; }
+else if (process.argv.length !== 2) { console.error('Usage: node doctor.mjs'); process.exitCode = 2; }
 else {
   inspect();
   console.log(JSON.stringify({workspace:root, checks}, null, 2));
