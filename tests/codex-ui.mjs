@@ -23,8 +23,8 @@ async function fixture(t, handler) {
   await new Promise(ok => srv.listen(0,'127.0.0.1',ok))
   t.after(() => {srv.closeAllConnections(); srv.close()})
   const origin = 'http://127.0.0.1:' + srv.address().port
-  const run = (name,...args) => exec(process.execPath,[...(name === 'cdp-run' && fs.existsSync(path.join(dir,'busy-port.mjs'))
-    ? ['--import',pathToFileURL(path.join(dir,'busy-port.mjs')).href] : []),path.join(bin,name + '.mjs'),...args],{
+  const run = (name,...args) => exec(process.execPath,[...(name === 'cdp-run' && fs.existsSync(path.join(dir,'chrome-startup.mjs'))
+    ? ['--import',pathToFileURL(path.join(dir,'chrome-startup.mjs')).href] : []),path.join(bin,name + '.mjs'),...args],{
     cwd:dir,timeout:90000,env:{...process.env, SCREENSHOT_TASK:'fix/ui', BEERPOWERS_FIGMA_FIXTURE:origin},
   })
   return {run,dir,origin}
@@ -62,9 +62,36 @@ test('installed headless browser captures a real DOM change on mobile and deskto
     {screenshot:'{name}.png'},{screenshot:'{name}-full.png',fullPage:true}],
     state:{value:"document.querySelector('button').textContent",width:'innerWidth'}}]}
   fs.writeFileSync(path.join(dir,'scenario.json'),JSON.stringify(scenario))
-  fs.writeFileSync(path.join(dir,'busy-port.mjs'),`
+  fs.writeFileSync(path.join(dir,'chrome-startup.mjs'),`
+    import assert from 'node:assert/strict';
+    import childProcess from 'node:child_process';
     import fs from 'node:fs';
     import {syncBuiltinESMExports} from 'node:module';
+    let firstProfile;
+    let hungChild;
+    let recovered = false;
+    if (process.platform === 'win32') {
+      const spawn = childProcess.spawn;
+      const timeout = globalThis.setTimeout;
+      const profileArg = '--user-data-dir=';
+      globalThis.setTimeout = (fn, ms, ...args) => timeout(fn, hungChild && !recovered && ms === 100 ? 1 : ms, ...args);
+      childProcess.spawn = function (file, args, options) {
+        const profile = args.find(arg => arg.startsWith(profileArg))?.slice(profileArg.length);
+        assert.ok(args.includes('--remote-debugging-port=0'));
+        if (!hungChild) {
+          firstProfile = profile;
+          hungChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options);
+          return hungChild;
+        }
+        assert.equal(recovered, false);
+        assert.ok(hungChild.exitCode !== null || hungChild.signalCode !== null);
+        assert.ok(!fs.existsSync(firstProfile));
+        assert.notEqual(profile, firstProfile);
+        assert.equal(options.detached, true);
+        recovered = true;
+        return spawn(file, args, options);
+      };
+    }
     const read = fs.readFileSync;
     let busy = true;
     fs.readFileSync = function (file, ...args) {
@@ -91,6 +118,40 @@ test('installed headless browser captures a real DOM change on mobile and deskto
     assert.equal(full.readUInt32BE(16),row.width)
     assert.ok(full.readUInt32BE(20) >= 1400)
   }
+})
+
+test('a rejected CDP socket stops the spawned browser and removes its profile', async t => {
+  const {run,dir,origin} = await fixture(t, (_req,res) => res.end())
+  const scenario = {baseUrl:origin, scenarios:[{name:'open',viewport:'desktop',steps:[{goto:'/'}]}]}
+  fs.writeFileSync(path.join(dir,'scenario.json'),JSON.stringify(scenario))
+  fs.writeFileSync(path.join(dir,'chrome-startup.mjs'),`
+    import childProcess from 'node:child_process';
+    import fs from 'node:fs';
+    import {syncBuiltinESMExports} from 'node:module';
+    import {join} from 'node:path';
+    process.env.BEERPOWERS_CHROME = process.execPath;
+    const spawn = childProcess.spawn;
+    childProcess.spawn = function (file, args, options) {
+      const prefix = '--user-data-dir=';
+      const profile = args.find(arg => arg.startsWith(prefix)).slice(prefix.length);
+      const child = spawn(file, ['-e', 'setInterval(() => {}, 1000)'], options);
+      fs.writeFileSync('browser.json', JSON.stringify({profile, pid:child.pid}));
+      fs.writeFileSync(join(profile, 'DevToolsActivePort'), '1\\n/devtools/browser/9817fa46-244a-4ba6-88e6-f82c5c8f699d');
+      return child;
+    };
+    globalThis.WebSocket = class extends EventTarget {
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(new Event('error')));
+      }
+    };
+    syncBuiltinESMExports();
+  `)
+  await assert.rejects(run('cdp-run','scenario.json','--out','results.jsonl'), error =>
+    error.code === 2 && /нет подключения к ws:\/\/127\.0\.0\.1:1\/devtools\/browser\//.test(error.stderr))
+  const {profile,pid} = JSON.parse(fs.readFileSync(path.join(dir,'browser.json'),'utf8'))
+  assert.throws(() => process.kill(pid,0), {code:'ESRCH'})
+  assert.ok(!fs.existsSync(profile))
 })
 
 test('standalone screenshot uses its own Chrome, reports DOM and saves full-page PNG', async t => {

@@ -35,6 +35,21 @@ const memoryTemplates = [
 const replyRules = ['reply_blocking_asks', 'reply_file_links', 'reply_user_shell'];
 const guardNames = ['guard-agent-memory', 'guard-approval-link', 'guard-comments', 'guard-commit-split',
   'guard-kill', 'guard-project-safety', 'guard-push', 'guard-stdin-code', 'guard-user-files'];
+// Группы сбалансированы по времени Windows CI. В каждой свой браузерный сценарий.
+const windowsNodeShards = {
+  'node-1': [
+    'codex-doctor.test.mjs', 'codex-integrations.test.mjs', 'codex-retro.test.mjs',
+  ],
+  'node-2': [
+    'codex-publication.test.mjs', 'codex-task-recovery.test.mjs', 'codex-ui.mjs', 'codex-update.test.mjs',
+  ],
+  'node-3': [
+    'codex-cli-help.test.mjs', 'codex-git-workspace.mjs', 'codex-make-shim.test.mjs', 'codex-memory.test.mjs',
+    'codex-migrations.test.mjs', 'codex-onboard.test.mjs', 'codex-package-install.test.mjs', 'codex-pm.test.mjs',
+    'codex-qa.test.mjs', 'codex-setup-tracks.test.mjs', 'codex-token-audit.test.mjs', 'codex-tracker.test.mjs',
+    'codex-workspace-clean.test.mjs',
+  ],
+};
 const results = [];
 const text = path => readFileSync(path, 'utf8').replace(/^\uFEFF/, '');
 const json = path => JSON.parse(text(path));
@@ -212,13 +227,13 @@ function perl() {
   return candidates.find(path => existsSync(path)) ?? 'perl';
 }
 
-function runTests() {
+function runTests(shard) {
   const temporary = mkdtempSync(join(tmpdir(), 'beerpowers-validation-'));
-  try { runFixtureSuites(temporary); }
+  try { runFixtureSuites(temporary, shard); }
   finally { rmSync(temporary, {recursive: true, force: true, maxRetries: 3}); }
 }
 
-function runFixtureSuites(temporary) {
+function runFixtureSuites(temporary, shard) {
   const env = {...process.env, BEERPOWERS_NODE: process.execPath, GIT_CONFIG_GLOBAL: join(temporary, 'unused.gitconfig'),
     XDG_CONFIG_HOME: temporary, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file'};
   const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
@@ -232,21 +247,42 @@ function runFixtureSuites(temporary) {
       assert.ok(tests.includes(name), name);
     }
   });
-  for (const name of perlTests) {
+
+  const pinned = new Set(Object.values(windowsNodeShards).flat());
+  const unassigned = nodeTests.filter(name => !pinned.has(name));
+  const nodeShards = Object.entries(windowsNodeShards);
+  const shards = new Map([['perl', perlTests]]);
+  for (const [index, [name, fixtures]] of nodeShards.entries()) {
+    const additions = unassigned.filter((_, position) => position % nodeShards.length === index);
+    shards.set(name, [...fixtures, ...additions].sort());
+  }
+  check('Windows fixture shards cover each fixture file exactly once', () => {
+    for (const [name, fixtures] of shards) assert.ok(fixtures.length, `Empty shard: ${name}`);
+    assert.deepEqual([...shards.values()].flat().sort(), tests);
+  });
+
+  const selected = shard ? shards.get(shard) : tests;
+  if (shard) console.log(`Fixture shard ${shard} (${selected.length} files)\n${selected.join('\n')}`);
+  for (const name of selected.filter(name => name.endsWith('.t'))) {
     check('tests/' + name, () => command(perl(), ['tests/' + name], {env, stdio: 'inherit'}));
   }
-  if (nodeTests.length) {
-    check('Node suites (' + nodeTests.length + ' files)', () => command(process.execPath,
-      ['--test', '--test-concurrency=1', ...nodeTests.map(name => 'tests/' + name)], {env, stdio: 'inherit'}));
+  const selectedNodeTests = selected.filter(name => name.endsWith('.mjs'));
+  if (selectedNodeTests.length) {
+    check('Node suites (' + selectedNodeTests.length + ' files)', () => command(process.execPath,
+      ['--test', '--test-concurrency=1', ...selectedNodeTests.map(name => 'tests/' + name)], {env, stdio: 'inherit'}));
   }
 }
 
-if (process.argv.length > 3 || (process.argv[2] && process.argv[2] !== '--package-only')) {
-  console.error('Usage: node .github/scripts/validate_codex.mjs [--package-only]');
+const args = process.argv.slice(2);
+const packageOnly = args[0] === '--package-only';
+const shard = args[0]?.match(/^--shard=(.+)$/)?.[1];
+const shardNames = ['perl', ...Object.keys(windowsNodeShards)];
+if (args.length > 1 || (args.length === 1 && !packageOnly && !shardNames.includes(shard))) {
+  console.error(`Usage: node .github/scripts/validate_codex.mjs [--package-only | --shard=<${shardNames.join('|')}>]`);
   process.exitCode = 2;
 } else {
-  packageChecks();
-  if (!process.argv[2]) runTests();
+  if (!shard || shard === 'perl') packageChecks();
+  if (!packageOnly) runTests(shard);
   const failed = results.filter(([, ok]) => !ok).map(([name]) => name);
   console.log(`Codex validation: ${results.length - failed.length}/${results.length} checks passed.`);
   if (failed.length) { console.error('Failed checks:\n- ' + failed.join('\n- ')); process.exitCode = 1; }

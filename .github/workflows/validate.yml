@@ -11,10 +11,26 @@ permissions:
 
 jobs:
   codex:
+    name: codex (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            label: ubuntu-latest
+            args: ''
+          - os: windows-latest
+            label: windows-latest, Perl
+            args: --shard=perl
+          - os: windows-latest
+            label: windows-latest, Node 1
+            args: --shard=node-1
+          - os: windows-latest
+            label: windows-latest, Node 2
+            args: --shard=node-2
+          - os: windows-latest
+            label: windows-latest, Node 3
+            args: --shard=node-3
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -22,12 +38,13 @@ jobs:
         with:
           node-version: '24'
       - name: Проверить релизные заметки текущей версии
+        if: matrix.args == '' || matrix.args == '--shard=perl'
         shell: bash
         run: |
           version=$(node -p "require('./plugins/beerpowers/.codex-plugin/plugin.json').version")
           node .github/scripts/release_notes.mjs "$version" > /dev/null
       - name: Проверить наличие браузера на Windows
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && startsWith(matrix.args, '--shard=node-')
         shell: pwsh
         run: |
           $browser = & node plugins/beerpowers/bin/cdp-screenshot.mjs --find-chrome
@@ -35,5 +52,5 @@ jobs:
             throw 'Installed Chrome/Chromium/Edge unavailable to the CDP adapter.'
           }
           Write-Host $browser
-      - name: Пакет Codex, миграции и локальные сценарии
-        run: node .github/scripts/validate_codex.mjs
+      - name: Валидация Codex
+        run: node .github/scripts/validate_codex.mjs ${{ matrix.args }}

@@ -292,48 +292,112 @@ if (!chromePath) {
   process.exit(2)
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+const isWindows = process.platform === 'win32'
 const tempProfile = !opts.profile
-const profile = opts.profile ? resolve(opts.profile) : mkdtempSync(join(tmpdir(), 'cdp-run-'))
-mkdirSync(profile, { recursive: true })
-const portFile = join(profile, 'DevToolsActivePort')
-rmSync(portFile, { force: true })
-
-// Порт 0 — свободный порт выбирает сам Chrome и пишет его в DevToolsActivePort профиля:
-// соседняя роль со своим Chrome не перехватит подключение.
 const extraArgs = (process.env.BEERPOWERS_CHROME_ARGS ?? '').split(/\s+/).filter(Boolean)
-const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-  '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check', '--disable-gpu', ...extraArgs, 'about:blank'],
-{ windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
-let chromeLog = ''
-let chromeExit = null
-chrome.stderr.on('data', (d) => { chromeLog = (chromeLog + d).slice(-3000) })
-chrome.on('exit', (code, signal) => { chromeExit = signal ?? code })
-chrome.on('error', (e) => { chromeExit = e.message })
 
-let wsUrl = null
-for (let i = 0; i < 200 && !wsUrl && chromeExit === null; i++) {
-  let lines = []
-  try {
-    lines = readFileSync(portFile, 'utf8').split('\n')
-  } catch (error) {
-    // На Windows файл может быть виден до того, как Chrome закончит запись.
-    if (error.code !== 'ENOENT' && !(process.platform === 'win32' && error.code === 'EBUSY')) throw error
+function browserEndpoint(port, path) {
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) return null
+  if (!/^\/devtools\/browser\/[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(path)) return null
+  return `ws://127.0.0.1:${port}${path}`
+}
+
+function launchChrome(profile, detached) {
+  // Chrome сам выбирает свободный порт и сообщает уникальный адрес браузера в файле профиля и stderr.
+  const child = spawn(chromePath, ['--headless=new', '--disable-background-networking', '--disable-component-update',
+    '--disable-sync', '--no-first-run', '--no-default-browser-check', '--disable-gpu',
+    ...(isWindows ? ['--enable-logging=stderr'] : []), ...extraArgs,
+    '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
+  { detached, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+  const chrome = { child, exit: null, processError: null, log: '', endpoint: null }
+  child.stderr.on('data', (chunk) => {
+    chrome.log = (chrome.log + chunk).slice(-3000)
+    const address = chrome.log.match(/^DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)(\S+)\r?$/m)
+    if (address) chrome.endpoint ??= browserEndpoint(address[1], address[2])
+  })
+  child.on('exit', (code, signal) => { chrome.exit = signal ?? code })
+  child.on('error', (error) => {
+    if (child.pid === undefined) chrome.exit = error.message
+    else chrome.processError = error.message
+  })
+  return chrome
+}
+
+async function waitForEndpoint(chrome, portFile) {
+  for (let i = 0; i < 200 && chrome.exit === null; i++) {
+    let endpoint
+    try {
+      const [port, path] = readFileSync(portFile, 'utf8').trim().split(/\r?\n/)
+      endpoint = browserEndpoint(port, path)
+    } catch (error) {
+      // На Windows файл может быть виден до того, как Chrome закончит запись.
+      if (error.code !== 'ENOENT' && !(isWindows && error.code === 'EBUSY')) throw error
+    }
+    if (endpoint || chrome.endpoint) return endpoint ?? chrome.endpoint
+    await sleep(100)
   }
-  if (lines.length >= 2 && lines[1].trim()) wsUrl = `ws://127.0.0.1:${lines[0].trim()}${lines[1].trim()}`
-  else await sleep(100)
-}
-if (!wsUrl) {
-  if (chromeExit === null) chrome.kill()
-  console.error(`Chrome ${chromePath} не открыл порт отладки за 20 с${chromeExit === null ? '' : ` (вышел: ${chromeExit})`}.\n${chromeLog.trim()}`)
-  if (tempProfile) rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-  process.exit(2)
 }
 
-const ws = new WebSocket(wsUrl)
-await new Promise((ok, fail) => {
-  ws.addEventListener('open', ok)
-  ws.addEventListener('error', () => fail(new Error(`нет подключения к ${wsUrl}`)))
-})
+function openSocket(wsUrl) {
+  return new Promise((ok, fail) => {
+    const ws = new WebSocket(wsUrl)
+    const error = () => new Error(`нет подключения к ${wsUrl}`)
+    const timer = setTimeout(() => { ws.close(); fail(error()) }, 5000)
+    ws.addEventListener('open', () => { clearTimeout(timer); ok(ws) }, { once: true })
+    ws.addEventListener('error', () => { clearTimeout(timer); fail(error()) }, { once: true })
+  })
+}
+
+async function stopChrome(chrome) {
+  if (chrome.exit === null) chrome.child.kill()
+  for (let i = 0; i < 20 && chrome.exit === null; i++) await sleep(100)
+  if (chrome.exit !== null) return true
+  console.error(`Chrome pid=${chrome.child.pid} не завершился после сигнала${chrome.processError ? ` (${chrome.processError})` : ''}`)
+  return false
+}
+
+function removeTempProfile(profile) {
+  if (!tempProfile) return true
+  try {
+    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    return true
+  } catch (error) {
+    console.error(`временный профиль ${profile} не удалён: ${error.message}`)
+    return false
+  }
+}
+
+const startupFailures = []
+const maxAttempts = isWindows && tempProfile ? 2 : 1
+let profile, chrome, ws
+for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  profile = tempProfile ? mkdtempSync(join(tmpdir(), 'cdp-run-')) : resolve(opts.profile)
+  mkdirSync(profile, { recursive: true })
+  const portFile = join(profile, 'DevToolsActivePort')
+  rmSync(portFile, { force: true })
+  chrome = launchChrome(profile, attempt > 1)
+
+  let startupError
+  try {
+    const endpoint = await waitForEndpoint(chrome, portFile)
+    if (endpoint) ws = await openSocket(endpoint)
+  } catch (error) { startupError = error }
+  if (ws) break
+
+  const timedOut = !startupError && chrome.exit === null
+  const reason = startupError?.message ?? (timedOut ? 'не открыл порт отладки за 20 с' : `завершился до открытия порта отладки (${chrome.exit})`)
+  const stopped = await stopChrome(chrome)
+  const removed = stopped && removeTempProfile(profile)
+  startupFailures.push(`Попытка ${attempt} (pid=${chrome.child.pid ?? 'нет'}): ${reason}.\n${chrome.log.trim() || 'stderr пуст'}`)
+  if (attempt < maxAttempts && timedOut && removed) {
+    // На Windows повторяем запуск в отдельной группе процессов, как cdp-screenshot --launch.
+    console.error(`Chrome ${chromePath} ${reason}. Повторный запуск с новым временным профилем.`)
+  } else {
+    console.error(`Не удалось запустить Chrome ${chromePath}.\n${startupFailures.join('\n')}`)
+    process.exit(2)
+  }
+}
+
 let nextId = 0
 const pending = new Map()
 const listeners = new Set()
@@ -362,19 +426,13 @@ let closed = false
 async function shutdown() {
   if (closed) return
   closed = true
-  if (chromeExit === null) {
+  if (chrome.exit === null) {
     send('Browser.close').catch(() => {})
-    for (let i = 0; i < 100 && chromeExit === null; i++) await sleep(100)
-    if (chromeExit === null) {
-      chrome.kill()
-      console.error(`Chrome pid=${chrome.pid} не закрылся по Browser.close — послан сигнал; проверь, что процесса нет`)
-    }
+    for (let i = 0; i < 100 && chrome.exit === null; i++) await sleep(100)
   }
+  const stopped = await stopChrome(chrome)
   ws.close()
-  if (tempProfile) {
-    try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) }
-    catch (e) { console.error(`временный профиль ${profile} не удалён: ${e.message}`) }
-  }
+  if (stopped) removeTempProfile(profile)
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown().then(() => process.exit(130)))
 
