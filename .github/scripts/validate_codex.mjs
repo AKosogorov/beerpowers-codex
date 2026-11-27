@@ -34,7 +34,7 @@ const memoryTemplates = [
 ];
 const replyRules = ['reply_blocking_asks', 'reply_file_links', 'reply_user_shell'];
 const guardNames = ['guard-agent-memory', 'guard-approval-link', 'guard-comments', 'guard-commit-split',
-  'guard-kill', 'guard-push', 'guard-stdin-code', 'guard-user-files'];
+  'guard-kill', 'guard-project-safety', 'guard-push', 'guard-stdin-code', 'guard-user-files'];
 const results = [];
 const text = path => readFileSync(path, 'utf8').replace(/^\uFEFF/, '');
 const json = path => JSON.parse(text(path));
@@ -128,6 +128,7 @@ function packageChecks() {
     for (const path of ['templates/charter/team-charter.md', 'templates/charter/team-lead.md', 'templates/role-memory/MEMORY.md',
       ...agents.map(role => `templates/roles/${role}-agent.md`),
       ...['figma', 'yandex-tracker'].map(name => `templates/settings/${name}-settings.json.example`),
+       'templates/settings/config.toml', 'templates/settings/beerpowers-safety.rules',
       ...replyRules.map(rule => `rules/${rule}.md`), 'reference/instructions.md',
       'THIRD_PARTY_NOTICES.txt', 'LICENSE']) mustExist(pkg + '/' + path);
   });

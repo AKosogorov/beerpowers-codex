@@ -28,11 +28,12 @@ export function workspaceCheck(root, pkg, mode) {
 export function setupAdditions(root, pkg) {
   const plan = JSON.parse(workspaceCheck(root, pkg, 'plan-json'));
   if (plan.format !== 1 || !Array.isArray(plan.changes)) throw Error('Unrecognized setup preview');
-  return plan.changes.map(({action, path, content}) => {
+  const changes = plan.changes.map(({action, path, content}) => {
     if (!/^(?:\.codex\/|memory\/|AGENTS\.md$|\.gitignore$)/.test(path)) throw Error('Unexpected setup target: ' + path);
     workspacePath(root, path);
     if (!['CREATE','APPEND','UPDATE'].includes(action)) throw Error('Unexpected setup action: ' + action);
     const addition = new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(Buffer.from(content, 'base64'));
     return {path, action, addition};
   });
+  return {changes, advisories: plan.advisories ?? []};
 }

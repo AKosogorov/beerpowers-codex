@@ -38,7 +38,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(Bash|apply_patch|(?:functions\\.)?request_user_input(?:_async)?|(?:functions\\.)?exec)$",
+        "matcher": "^(Bash|apply_patch|(?:functions\\.)?request_user_input(?:_async)?|(?:functions\\.)?exec(?:_command)?)$",
         "hooks": [
           {
             "type": "command",

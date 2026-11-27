@@ -71,7 +71,7 @@ my $cfg = decode_json(bytes('.codex/role-settings.json'));
 like(bytes('.codex/quality-gates.txt'),qr{\*/projects/[^/]+/\*\|\*/worktrees/\*/[^/]+/\* Проверка проекта: git diff --check}, 'one generated gate covers both checkout layouts');
 ok(!exists $cfg->{stacks}, 'stack discovery has no duplicate JSON field');
 is_deeply($cfg->{rules}, {}, 'framework detection does not invent domain rules');
-ok(!-d '.codex/rules', 'setup ships no generic path rules');
+is_deeply([glob('.codex/rules/*.md')], [], 'setup ships no generic path rules');
 my %picked = (
     policy => {paths => ['php/app'], text => "# Policy\n\nOnly the active tenant may change a catalog entry."},
     invoice => {paths => ['php/database/migrations'], text => "# Invoice\n\nArchived invoices retain the owner reference."},
@@ -85,7 +85,7 @@ my %picked = (
 {
     local $ENV{BEERPOWERS_PATH_RULES_JSON} = encode_json({demo => \%picked});
     is((run('plan'))[0], 0, 'confirmed path rules are plannable');
-    ok(!-d '.codex/rules', 'path rule plan is read only');
+    is_deeply([glob('.codex/rules/*.md')], [], 'path rule plan is read only');
     is((run('apply'))[0], 0, 'setup saves project rules and their actual paths');
     like((run('apply'))[1], qr/^No changes\.$/m, 'same path rule input is idempotent');
 }

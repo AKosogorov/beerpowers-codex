@@ -11,7 +11,7 @@ use File::Spec;
 use File::Temp ();
 BEGIN { $0 = Cygwin::win_to_posix_path($0) if $^O eq 'cygwin' && $0 =~ /\\/ }
 use FindBin qw($Bin);
-for my $hook (qw(shell git session-start guard-agent-memory guard-user-files guard-approval-link
+for my $hook (qw(shell git session-start guard-agent-memory guard-user-files guard-approval-link guard-project-safety
                 guard-push guard-kill guard-stdin-code guard-commit-split guard-comments)) {
     require "$Bin/$hook.pl";
 }
@@ -155,9 +155,10 @@ if ($tool eq 'apply_patch') {
     context('BeerPowers advisory: не удалось разобрать список файлов apply_patch.') unless @paths;
     quality($root, $project, @paths) if $kind eq 'PostToolUse';
     changed_path($project, $setup_root, @$_) for @paths;
-} elsif ($tool eq 'Bash') {
+} elsif ($tool =~ /^(?:Bash|(?:functions\.)?exec_command)$/) {
     my $opt = {
         project => $project, setup_root => $setup_root, root => $root, config => $config,
+        project_safety => $kind eq 'PreToolUse' && $project && -f "$root/.codex/rules/beerpowers-safety.rules",
         post => $kind eq 'PostToolUse'
     };
     inspect_shell($cmd, $cwd, 0, $opt);

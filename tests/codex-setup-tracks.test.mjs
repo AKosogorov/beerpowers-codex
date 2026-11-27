@@ -45,6 +45,38 @@ function fixture(t, product = 'api') {
     update: track => JSON.parse(run(process.execPath, [join(pkg, 'bin/update.mjs'), 'plan'], track))};
 }
 
+test('setup previews and installs the workspace safety policy without overwriting project config', t => {
+  const config = '.codex/config.toml';
+  const rules = '.codex/rules/beerpowers-safety.rules';
+  const fresh = fixture(t);
+  const plan = fresh.setup('plan');
+  for (const path of [config, rules]) {
+    assert.ok(plan.includes('CREATE ' + path));
+    assert.equal(fresh.has(path), false);
+  }
+  fresh.setup('apply');
+  assert.match(fresh.read(config), /^default_permissions = "beerpowers"$/m);
+  assert.match(fresh.read(config), /^"\*\*\/\.env\.\*" = "deny"$/m);
+  assert.match(fresh.read(rules), /"migrate:fresh", "migrate:reset", "db:wipe"/);
+  assert.doesNotMatch(fresh.read(rules), /shop-backend/);
+  assert.match(fresh.setup('apply'), /^No changes\.$/m);
+  assert.deepEqual(fresh.update().changes, []);
+  for (const path of [config, rules]) rmSync(join(fresh.root, path));
+  const upgrade = fresh.update();
+  assert.deepEqual(upgrade.changes.map(change => change.path).sort(), [config, rules]);
+  fresh.node('update.mjs', 'apply', upgrade.planId);
+  assert.deepEqual(fresh.update().changes, []);
+
+  const existing = fixture(t);
+  const manual = 'model = "project-model"\r\n';
+  existing.put(config, manual);
+  assert.match(existing.setup('plan'), /Existing \.codex\/config\.toml/);
+  existing.setup('apply');
+  assert.equal(existing.read(config), manual);
+  assert.equal(existing.read(rules), fresh.read(rules));
+  assert.match(existing.update().advisories.join('\n'), /\.codex\/config\.toml.*beerpowers/);
+});
+
 test('setup preserves the existing gate notes for both school landing products', t => {
   const products = ['online-school-1-com', 'school-landing-clone'];
   const f = fixture(t, products[0]);

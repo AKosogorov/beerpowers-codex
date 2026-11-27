@@ -1,0 +1,14 @@
+default_permissions = "beerpowers"
+
+[permissions.beerpowers]
+extends = ":workspace"
+
+[permissions.beerpowers.filesystem]
+glob_scan_max_depth = 8
+"~/.ssh" = "deny"
+
+[permissions.beerpowers.filesystem.":workspace_roots"]
+".env" = "deny"
+".env.*" = "deny"
+"**/.env" = "deny"
+"**/.env.*" = "deny"

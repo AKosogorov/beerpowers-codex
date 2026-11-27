@@ -119,6 +119,7 @@ sub inspect_segment {
         opaque() unless $opt->{post};
         return $base;
     }
+    guard_project_shell($opt->{root}, $base, $name, @args) if $opt->{project_safety};
     if ($name =~ /^(?:cd|set-location|push-location|pushd)$/) {
         shift @args if @args && lc $args[0] =~ /^(?:-path|-literalpath|\/d)$/;
         opaque() unless @args == 1 && !dynamic_word($args[0]);
@@ -148,6 +149,7 @@ sub inspect_segment {
             }
         }
         my $sub = shift(@args) // '';
+        guard_project_git($sub, @args) if $opt->{project_safety};
         guard_setup_git($sub, @args) if defined $opt->{setup_root};
         if ($opt->{project}) {
             guard_push($repo, $opt->{root}, @args) if $sub eq 'push' && enabled('guard-push');

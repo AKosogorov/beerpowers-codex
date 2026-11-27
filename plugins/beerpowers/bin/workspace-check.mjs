@@ -205,6 +205,7 @@ function inspect(root) {
 
   function sharedSettings() {
     const names = ['AGENTS.md', ...charter, index, '.codex/workspace.json', '.codex/git-settings.json', '.codex/role-settings.json', '.codex/barriers.json',
+      '.codex/config.toml', '.codex/rules/beerpowers-safety.rules',
       '.codex/quality-gates.txt', ...products().map(repo => '.codex/role-settings/' + repo + '.json')];
     const matches = ignored(names);
     const tracked = new Set(git(root, ['ls-files', '-z', '--', ...names]).split('\0'));
