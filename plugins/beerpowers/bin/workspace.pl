@@ -116,7 +116,7 @@ sub gate_sections {
 }
 
 sub command_guide {
-    my ($name) = @_;
+    my ($name, $selected) = @_;
     my $dir = 'memory/commands';
     my $default = safe_path("$dir/$name.md");
     return $default if -e $default || !-d $dir;
@@ -132,8 +132,9 @@ sub command_guide {
             grep { /(?<!\x60)\x60[ \t]*(?:npm[ \t]+--prefix[ \t]+$checkout(?:[ \t]+run)|make[ \t]+-C[ \t]+$checkout)[ \t]/ }
                 gate_sections($body)
     } @notes;
-    die "$dir: multiple command guides for $name: @matching\n" if @matching > 1;
-    return @matching ? "$dir/$matching[0]" : $default;
+    @matching = grep { "$dir/$_" ne $selected } @matching if @matching > 1 && defined $selected;
+    die "$dir: multiple command guides for $name: @matching\n" if @matching > 1 && !defined($selected);
+    return @matching == 1 ? "$dir/$matching[0]" : $default;
 }
 
 sub legacy_gate {
@@ -222,7 +223,9 @@ my $saved_guides = ref($saved_workspace) eq 'HASH' && exists($saved_workspace->{
     ? $saved_workspace->{commandGuides} : {};
 die "$workspace_file: commandGuides must be an object\n" unless ref($saved_guides) eq 'HASH';
 my %command_guides = %$saved_guides;
+my %changed_guides;
 my %test_inputs;
+my $memory_index = safe_path('memory/MEMORY.md');
 my $checks_json = $doctor ? '' : ($ENV{BEERPOWERS_TESTS_JSON} // '');
 my $read_saved_checks = $doctor || ($machine_plan && !length($checks_json));
 if (length $checks_json) {
@@ -234,6 +237,13 @@ if (length $checks_json) {
     $test_inputs{$repo} = {command => $command, source => $source};
 } elsif (!$read_saved_checks) {
     die "Set BEERPOWERS_TESTS_JSON with checks for every project: @repos\n";
+}
+my %indexed_guides;
+if (length($checks_json) && -f $memory_index) {
+    my $body = markdown_prose(read_file($memory_index));
+    while ($body =~ /^- \[Проверки ([A-Za-z0-9_.-]+)\]\(commands\/([A-Za-z0-9_][A-Za-z0-9_.-]*\.md)\)$/mg) {
+        $indexed_guides{$1} = exists($indexed_guides{$1}) ? undef : "memory/commands/$2";
+    }
 }
 for my $name (@repos) {
     my $product = "projects/$name";
@@ -254,6 +264,13 @@ for my $name (@repos) {
             unless defined($guide) && !ref($guide) && $guide =~ m{\Amemory/commands/[A-Za-z0-9_][A-Za-z0-9_.-]*\.md\z} &&
                 lc(basename($guide)) ne 'readme.md';
         die "$guide: expected an existing command guide\n" unless -f safe_path($guide);
+        if (exists $params->{guide}) {
+            my $previous = $command_guides{$name};
+            if (!defined($previous) || (!ref($previous) && $previous eq $guide)) {
+                $previous = $indexed_guides{$name} // $previous // command_guide($name, $guide);
+            }
+            $changed_guides{$name} = [$previous, $guide] if !ref($previous) && $previous ne $guide;
+        }
         $command_guides{$name} = $guide;
     }
     my ($cmd, $src) = @{$params}{qw(command source)};
@@ -331,21 +348,29 @@ sub engine_template {
 }
 
 # Fenced examples describe a configuration without activating its headings or markers.
-sub markdown_prose {
-    my ($text) = @_;
-    $text =~ s/\A\xef\xbb\xbf//;
-    my ($fence, @lines);
-    for my $line (split /\r?\n/, $text) {
+sub prose_line_indices {
+    my ($lines) = @_;
+    my ($fence, @indices);
+    for my $i (0 .. $#$lines) {
+        my $line = $lines->[$i] =~ s/\r?\n\z//r;
+        $line =~ s/\A\xef\xbb\xbf// if $i == 0;
         if (defined $fence) {
             my $char = substr($fence, 0, 1);
             undef $fence if $line =~ /^ {0,3}\Q$fence\E\Q$char\E*[ \t]*$/;
         } elsif ($line =~ /^ {0,3}(`{3,}|~{3,})/) {
             $fence = $1;
         } else {
-            push @lines, $line;
+            push @indices, $i;
         }
     }
-    return join("\n", @lines);
+    return @indices;
+}
+
+sub markdown_prose {
+    my ($text) = @_;
+    $text =~ s/\A\xef\xbb\xbf//;
+    my @lines = split /(?<=\n)/, $text;
+    return join("\n", map { s/\r?\n\z//r } @lines[prose_line_indices(\@lines)]);
 }
 
 my $project_input = !$doctor && !$machine_plan ? $ENV{BEERPOWERS_PROJECT_NAME} : undef;
@@ -396,6 +421,13 @@ sub fill_table_row {
     my ($cells, $positions, $values) = @_;
     @{$cells}[@$positions] = map { " $_ " } @$values;
     return '|' . join('|', map { $_ // ' ' } @$cells) . '|';
+}
+sub edit_table_cell {
+    my ($line, $position, $edit) = @_;
+    my @parts = split /(?<!\\)\|/, $line, -1;
+    my $index = $position + 1;
+    $parts[$index] = $edit->($parts[$index]) if defined $parts[$index];
+    return join('|', @parts);
 }
 sub roster_row {
     my ($role, @products) = @_;
@@ -497,7 +529,9 @@ for my $name (qw(team-charter team-lead)) {
 my %workspace_defaults = (schemaVersion => 1, beerpowers => $version, projectName => $project_name);
 my $workspace_changed = 0;
 $workspace_defaults{commandGuides} = \%command_guides if %command_guides;
-if (ref($saved_workspace) eq 'HASH' && $json->encode($saved_guides) ne $json->encode(\%command_guides)) {
+my $guide_binding_changed = ref($saved_workspace) eq 'HASH' &&
+    $json->encode($saved_guides) ne $json->encode(\%command_guides);
+if ($guide_binding_changed) {
     $saved_workspace->{commandGuides} = \%command_guides;
     $workspace_changed = 1;
 }
@@ -556,7 +590,7 @@ if (!$doctor && !$machine_plan && length($ENV{BEERPOWERS_PARALLEL_TESTS_JSON} //
 }
 if ($workspace_changed) {
     $saved_workspace->{schemaVersion} //= 1;
-    replace_setup_file($workspace_file, $json->encode($saved_workspace));
+    replace_setup_file($workspace_file, $json->encode($saved_workspace)) unless $guide_binding_changed;
 }
 seed($workspace_file, $json->encode(\%workspace_defaults), sub {
     my $config = parse_json($_[0]);
@@ -651,7 +685,6 @@ my $render_memory = sub {
     return render_sections($body, \%memory_slots);
 };
 # An existing project owns its memory unless its index contains our managed block.
-my $memory_index = safe_path('memory/MEMORY.md');
 my $shared_memory = 0;
 if (-f $memory_index) {
     $shared_memory = markdown_prose(read_file($memory_index)) !~ /^<!-- beerpowers:engine codex-memory -->$/m;
@@ -680,12 +713,21 @@ if (!$shared_memory && !$doctor) {
 } elsif (!$shared_memory && $current_setup) {
     $index .= "\n" . engine_template('memory-index');
 }
-if (!$doctor && keys %requested_index) {
+if (!$doctor && (%requested_index || %changed_guides)) {
     my $path = safe_path('memory/commands/README.md');
     if (-f $path) {
         my $before = read_file($path);
         my $after = edit_setup_table($before, $command_index_header, undef, sub {
             my ($newline, $positions, $count, @rows) = @_;
+            my %links = map { (basename($_->[0]), basename($_->[1])) } values %changed_guides;
+            for my $row (@rows) {
+                $row = edit_table_cell($row, $positions->[0], sub {
+                    my ($cell) = @_;
+                    my ($old) = $cell =~ /\A[ \t]*\[([^\]]+)\]\(\1\)[ \t]*\z/;
+                    return $cell unless defined($old) && exists $links{$old};
+                    return $cell =~ s/\[\Q$old\E\]\(\Q$old\E\)/[$links{$old}]($links{$old})/r;
+                });
+            }
             my @file_cells = map { (table_cells($_))[$positions->[0]] // '' } @rows;
             my @missing = grep {
                 my $file = $_;
@@ -699,16 +741,35 @@ if (!$doctor && keys %requested_index) {
         });
         if (defined $after) {
             push @changes, [$path, $before, $after, 'replace'] if $after ne $before;
-        } else {
+        } elsif (%requested_index) {
             append_lines($path, join("\n", '', $command_index_header, '|---|---|---|',
                 @command_rows{sort keys %requested_index}, ''));
         }
-    } elsif ($shared_memory) {
+    } elsif ($shared_memory && %requested_index) {
         seed($path, $render_memory->("$Bin/../templates/memory/commands/README.md"));
     }
 }
-seed('memory/MEMORY.md', $index . "\n" . join('', map {
-    "- [Проверки $_](commands/" . basename($test_inputs{$_}{guide} // "memory/commands/$_.md") . ")\n"
+sub guide_index_line {
+    my ($name, $guide) = @_;
+    return "- [Проверки $name](commands/" . basename($guide) . ")";
+}
+my $memory_relink;
+if (!$doctor && %changed_guides && -f $memory_index) {
+    my %links = map {
+        my ($old, $new) = @{$changed_guides{$_}};
+        (guide_index_line($_, $old), guide_index_line($_, $new))
+    } keys %changed_guides;
+    my $before = read_file($memory_index);
+    my @lines = split /(?<=\n)/, $before;
+    for my $i (prose_line_indices(\@lines)) {
+        my ($line, $ending) = $lines[$i] =~ /\A(.*?)(\r?\n)?\z/;
+        $lines[$i] = $links{$line} . ($ending // '') if exists $links{$line};
+    }
+    my $after = join('', @lines);
+    $memory_relink = $after if $after ne $before;
+}
+seed($memory_index, $index . "\n" . join('', map {
+    guide_index_line($_, $test_inputs{$_}{guide} // "memory/commands/$_.md") . "\n"
 } @repos));
 if ($shared_memory && !$doctor) {
     my %sections = (
@@ -776,6 +837,15 @@ for my $document (@charter_seed) {
                     my ($role) = $values[0] =~ /\A`?([a-z-]+)`?\z/;
                     if (defined($role)) {
                         delete $missing{$role};
+                        my %links = map { @{$changed_guides{$_}} }
+                            grep { exists $changed_guides{$_} } split /,[ \t]*/, $values[1];
+                        if (%links) {
+                            $line = edit_table_cell($line, $positions->[2], sub {
+                                return $_[0] =~ s/\x60([^\x60\r\n]+)\x60/exists($links{$1}) ? "\x60$links{$1}\x60" : $&/ger;
+                            });
+                            @cells = table_cells($line);
+                            $values[2] = trim_cell($cells[$positions->[2]] // '');
+                        }
                         my $prior = $values[1] =~ /\A[A-Za-z0-9_.-]+(?:, [A-Za-z0-9_.-]+)*\z/
                             ? roster_row($role, split /, /, $values[1]) : undef;
                         if (defined($prior) && $prior eq fill_table_row([], [0, 1, 2], \@values)) {
@@ -880,6 +950,9 @@ for my $rule (sort values %ignore) {
     $doctor ? push(@errors, ".gitignore: missing root rule $rule") : push(@rules, "$rule\n");
 }
 append_lines('.gitignore', join('', @rules)) if @rules;
+# The memory index and binding identify the old guide until the tables are updated.
+replace_setup_file($memory_index, $memory_relink) if defined $memory_relink;
+replace_setup_file($workspace_file, $json->encode($saved_workspace)) if $guide_binding_changed;
 die join("\n", @errors) . "\n" if @errors;
 if ($packet) {
     die "Choose BEERPOWERS_REPO for role-packet: @repos\n" if @repos > 1 && !length($ENV{BEERPOWERS_REPO} // '');

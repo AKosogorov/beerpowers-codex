@@ -146,6 +146,20 @@ function migrateText(text, path, file, name, from, to, previous) {
       after = after.slice(0, start) + content.replace(oldJournal, '$1\x60.codex/team-lead.md\x60') + after.slice(end);
       actions.push('fix generated retro index path');
     }
+    const oldDebt = '\x60doctor.mjs tech-debt-index\x60';
+    const newDebt = '\x60$beerpowers tech-debt-index\x60';
+    const memoryTemplate = read(workspacePath(pkg, 'templates/memory/MEMORY.md'));
+    const lines = [...markupLines(after)];
+    const debtEdits = [...markupLines(memoryTemplate)].filter(({content}) => content.includes(newDebt))
+      .flatMap(({content}) => {
+        const original = content.replace(newDebt, oldDebt);
+        const matches = lines.filter(line => line.content === original);
+        return matches.length === 1 ? [{...matches[0], replacement:content}] : [];
+      });
+    for (const {start, end, replacement} of debtEdits.sort((left, right) => right.start - left.start)) {
+      after = after.slice(0, start) + replacement + after.slice(end);
+    }
+    if (debtEdits.length) actions.push('replace generated tech-debt command');
   }
   const beforeStamp = after;
   if (name === 'codex-team') {

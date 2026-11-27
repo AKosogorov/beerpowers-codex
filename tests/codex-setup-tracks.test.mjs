@@ -173,6 +173,37 @@ test('setup saves a selected Make guide for doctor and the tester packet', t => 
   assert.deepEqual(f.update().changes, []);
 });
 
+test('changing a saved guide updates generated pointers and preserves edited table cells', t => {
+  const f = fixture(t, 'demo');
+  const charter = '.codex/team-charter.md';
+  const memory = 'memory/MEMORY.md';
+  const commands = 'memory/commands/README.md';
+  f.setup('apply');
+  f.put(memory, f.read(memory) + '\nРучная ссылка [справка](commands/demo.md).\n');
+  f.put(commands, f.read(commands).replace('Штатные проверки проекта demo', 'Ручное описание проверок'));
+  f.put(charter, f.read(charter).replace(/^(\| `tester` \|.*) \|$/m, '$1, `memory/tests/extra.md` |'));
+
+  const guide = 'memory/commands/api.md';
+  f.put(guide, '# API\n\n## Гейты\n\n- `make -C projects/demo check`\n');
+  f.put('projects/demo/Makefile', 'check:\n\t@echo fixture\n');
+  const options = {BEERPOWERS_TESTS_JSON:JSON.stringify({demo:{guide, command:'make check', source:'Makefile'}})};
+  const before = [memory, commands, charter].map(f.read);
+  const plan = f.setup('plan', undefined, options);
+  for (const file of [memory, commands, charter]) assert.ok(plan.includes('UPDATE ' + file));
+  const [index, commandIndex, roster] = before;
+  f.setup('apply', undefined, options);
+  assert.equal(f.read(memory), index.replace('[Проверки demo](commands/demo.md)', '[Проверки demo](commands/api.md)'));
+  assert.equal(f.read(commands), commandIndex.replace('[demo.md](demo.md)', '[api.md](api.md)'));
+  assert.equal(f.read(charter), roster.replaceAll('`memory/commands/demo.md`', '`memory/commands/api.md`'));
+  assert.match(f.packet('tester'), /FILE memory\/commands\/api\.md sha256=/);
+  assert.match(f.setup('apply', undefined, options), /^No changes\.$/m);
+  assert.deepEqual(f.update().changes, []);
+  const updated = [memory, commands, charter].map(f.read);
+  [memory, commands, charter].forEach((file, i) => f.put(file, before[i]));
+  f.setup('apply', undefined, options);
+  assert.deepEqual([memory, commands, charter].map(f.read), updated, 'reconciles pointers when the binding was already written');
+});
+
 test('setup previews and seeds selected discovery notes, preserving manual memory on repeat', t => {
   const f = fixture(t);
   f.put('projects/api/package.json', '{"scripts":{"test":"node --test"}}\n');
