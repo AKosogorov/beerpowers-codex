@@ -67,52 +67,31 @@ test('installed headless browser captures a real DOM change on mobile and deskto
     import childProcess from 'node:child_process';
     import fs from 'node:fs';
     import {syncBuiltinESMExports} from 'node:module';
+    const spawn = childProcess.spawn;
+    const timeout = globalThis.setTimeout;
+    const profileArg = '--user-data-dir=';
     let firstProfile;
     let hungChild;
     let recovered = false;
-    if (process.platform === 'win32') {
-      const spawn = childProcess.spawn;
-      const timeout = globalThis.setTimeout;
-      const profileArg = '--user-data-dir=';
-      let firstEndpoint;
-      globalThis.WebSocket = new Proxy(globalThis.WebSocket, {
-        construct(Socket, args) {
-          if (!firstEndpoint) {
-            firstEndpoint = args[0];
-            const socket = new EventTarget();
-            queueMicrotask(() => socket.dispatchEvent(new Event('error')));
-            return socket;
-          }
-          assert.equal(args[0], firstEndpoint);
-          return new Socket(...args);
-        }
-      });
-      globalThis.setTimeout = (fn, ms, ...args) => timeout(fn, hungChild && !recovered && ms === 100 ? 1 : ms, ...args);
-      childProcess.spawn = function (file, args, options) {
-        const profile = args.find(arg => arg.startsWith(profileArg))?.slice(profileArg.length);
-        assert.ok(args.includes('--remote-debugging-port=0'));
-        if (!hungChild) {
-          firstProfile = profile;
-          hungChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options);
-          return hungChild;
-        }
-        assert.equal(recovered, false);
-        assert.ok(hungChild.exitCode !== null || hungChild.signalCode !== null);
-        assert.ok(!fs.existsSync(firstProfile));
-        assert.notEqual(profile, firstProfile);
-        assert.equal(options.detached, true);
-        recovered = true;
-        return spawn(file, args, options);
-      };
-    }
-    const read = fs.readFileSync;
-    let busy = true;
-    fs.readFileSync = function (file, ...args) {
-      if (process.platform === 'win32' && busy && typeof file === 'string' && file.endsWith('DevToolsActivePort') && fs.existsSync(file)) {
-        busy = false;
-        throw Object.assign(new Error('Chrome is writing DevToolsActivePort'), {code:'EBUSY'});
+    globalThis.setTimeout = (fn, ms, ...args) => timeout(fn, hungChild && !recovered && ms === 20000 ? 100 : ms, ...args);
+    childProcess.spawn = function (file, args, options) {
+      assert.ok(args.includes('--remote-debugging-pipe'));
+      assert.ok(!args.some(arg => arg.startsWith('--remote-debugging-port')));
+      assert.deepEqual(options.stdio.slice(3), ['pipe','pipe']);
+      if (process.platform !== 'win32') return spawn(file, args, options);
+      assert.equal(options.detached, true);
+      const profile = args.find(arg => arg.startsWith(profileArg))?.slice(profileArg.length);
+      if (!hungChild) {
+        firstProfile = profile;
+        hungChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options);
+        return hungChild;
       }
-      return read.call(this, file, ...args);
+      assert.equal(recovered, false);
+      assert.ok(hungChild.exitCode !== null || hungChild.signalCode !== null);
+      assert.ok(!fs.existsSync(firstProfile));
+      assert.notEqual(profile, firstProfile);
+      recovered = true;
+      return spawn(file, args, options);
     };
     syncBuiltinESMExports();
   `)
@@ -133,41 +112,40 @@ test('installed headless browser captures a real DOM change on mobile and deskto
   }
 })
 
-test('a rejected CDP socket stops the spawned browser and removes its profile', async t => {
+test('a rejected CDP pipe stops the spawned browser and removes its profile', async t => {
   const {run,dir,origin} = await fixture(t, (_req,res) => res.end())
   const scenario = {baseUrl:origin, scenarios:[{name:'open',viewport:'desktop',steps:[{goto:'/'}]}]}
   fs.writeFileSync(path.join(dir,'scenario.json'),JSON.stringify(scenario))
   fs.writeFileSync(path.join(dir,'chrome-startup.mjs'),`
+    import assert from 'node:assert/strict';
     import childProcess from 'node:child_process';
     import fs from 'node:fs';
     import {syncBuiltinESMExports} from 'node:module';
-    import {join} from 'node:path';
+    import {PassThrough} from 'node:stream';
     process.env.BEERPOWERS_CHROME = process.execPath;
     const spawn = childProcess.spawn;
     childProcess.spawn = function (file, args, options) {
+      assert.ok(args.includes('--remote-debugging-pipe'));
       const prefix = '--user-data-dir=';
       const profile = args.find(arg => arg.startsWith(prefix)).slice(prefix.length);
       const child = spawn(file, ['-e', 'setInterval(() => {}, 1000)'], options);
       fs.appendFileSync('browsers.jsonl', JSON.stringify({profile, pid:child.pid}) + '\\n');
-      fs.writeFileSync(join(profile, 'DevToolsActivePort'), '10001\\n/devtools/browser/9817fa46-244a-4ba6-88e6-f82c5c8f699d');
+      const commands = child.stdio[3] = new PassThrough();
+      const responses = child.stdio[4] = new PassThrough();
+      commands.once('data', chunk => {
+        assert.equal(chunk.at(-1), 0);
+        const {id, method} = JSON.parse(chunk.subarray(0, -1));
+        assert.equal(method, 'Browser.getVersion');
+        const response = JSON.stringify({id, error:{message:'Test CDP refusal\\nnext line'}});
+        responses.write(response.slice(0, 10));
+        responses.write(response.slice(10) + '\\0');
+      });
       return child;
-    };
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      webSocketDebuggerUrl: 'ws://127.0.0.1:10001/devtools/browser/9817fa46-244a-4ba6-88e6-f82c5c8f699d'
-    }));
-    globalThis.WebSocket = class extends EventTarget {
-      constructor() {
-        super();
-        queueMicrotask(() => this.dispatchEvent(Object.assign(new Event('error'), {
-          error: new Error('Test CDP refusal\\nnext line')
-        })));
-      }
     };
     syncBuiltinESMExports();
   `)
   await assert.rejects(run('cdp-run','scenario.json','--out','results.jsonl'), error =>
-    error.code === 2 && /нет подключения к ws:\/\/127\.0\.0\.1:10001\/devtools\/browser\//.test(error.stderr) &&
-    error.stderr.includes('Test CDP refusal next line'))
+    error.code === 2 && error.stderr.includes('Browser.getVersion: Test CDP refusal next line'))
   const browsers = fs.readFileSync(path.join(dir,'browsers.jsonl'),'utf8').trim().split('\n').map(JSON.parse)
   assert.equal(browsers.length, process.platform === 'win32' ? 2 : 1)
   for (const {profile,pid} of browsers) {
