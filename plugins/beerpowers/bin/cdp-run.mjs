@@ -302,13 +302,14 @@ function browserEndpoint(port, path) {
   return `ws://127.0.0.1:${port}${path}`
 }
 
-function launchChrome(profile, detached) {
+function launchChrome(profile) {
   // Chrome сам выбирает свободный порт и сообщает уникальный адрес браузера в файле профиля и stderr.
   const child = spawn(chromePath, ['--headless=new', '--disable-background-networking', '--disable-component-update',
     '--disable-sync', '--no-first-run', '--no-default-browser-check', '--disable-gpu',
     ...(isWindows ? ['--enable-logging=stderr'] : []), ...extraArgs,
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
-  { detached, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+  // На Windows запускаем в отдельной группе процессов, как cdp-screenshot --launch.
+  { detached: isWindows, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
   const chrome = { child, exit: null, processError: null, log: '', endpoint: null }
   child.stderr.on('data', (chunk) => {
     chrome.log = (chrome.log + chunk).slice(-3000)
@@ -338,14 +339,47 @@ async function waitForEndpoint(chrome, portFile) {
   }
 }
 
-function openSocket(wsUrl) {
+function openSocket(wsUrl, timeout) {
   return new Promise((ok, fail) => {
     const ws = new WebSocket(wsUrl)
-    const error = () => new Error(`нет подключения к ${wsUrl}`)
-    const timer = setTimeout(() => { ws.close(); fail(error()) }, 5000)
+    const timer = setTimeout(() => {
+      fail(new Error(`тайм-аут WebSocket (${timeout} мс)`))
+      ws.close()
+    }, timeout)
     ws.addEventListener('open', () => { clearTimeout(timer); ok(ws) }, { once: true })
-    ws.addEventListener('error', () => { clearTimeout(timer); fail(error()) }, { once: true })
+    ws.addEventListener('error', event => {
+      clearTimeout(timer)
+      fail(event.error ?? new Error(event.message || 'ошибка WebSocket'))
+    }, { once: true })
   })
+}
+
+async function connectToChrome(chrome, endpoint) {
+  const { host } = new URL(endpoint)
+  const attempts = isWindows ? 4 : 1
+  let detail = 'Chrome завершился до подключения'
+  for (let attempt = 1; attempt <= attempts && chrome.exit === null; attempt++) {
+    try {
+      if (isWindows) {
+        const response = await fetch(`http://${host}/json/version`, {
+          signal: AbortSignal.timeout(750), redirect: 'error',
+        })
+        if (!response.ok) {
+          await response.body?.cancel()
+          throw new Error(`/json/version вернул HTTP ${response.status}`)
+        }
+        if ((await response.json()).webSocketDebuggerUrl !== endpoint) {
+          throw new Error('/json/version сообщил адрес другого браузера')
+        }
+      }
+      return await openSocket(endpoint, isWindows ? 750 : 5000)
+    } catch (error) {
+      const cause = error.cause?.code ?? error.cause?.message ?? error.message
+      detail = typeof cause === 'string' ? cause.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 200) : 'ошибка подключения'
+    }
+    if (attempt < attempts && chrome.exit === null) await sleep(100)
+  }
+  throw new Error(`нет подключения к ws://${host}/devtools/browser/ (${detail})`)
 }
 
 async function stopChrome(chrome) {
@@ -375,22 +409,22 @@ for (let attempt = 1; attempt <= maxAttempts; attempt++) {
   mkdirSync(profile, { recursive: true })
   const portFile = join(profile, 'DevToolsActivePort')
   rmSync(portFile, { force: true })
-  chrome = launchChrome(profile, attempt > 1)
+  chrome = launchChrome(profile)
 
-  let startupError
+  let endpoint, startupError
   try {
-    const endpoint = await waitForEndpoint(chrome, portFile)
-    if (endpoint) ws = await openSocket(endpoint)
+    endpoint = await waitForEndpoint(chrome, portFile)
+    if (endpoint) ws = await connectToChrome(chrome, endpoint)
   } catch (error) { startupError = error }
   if (ws) break
 
   const timedOut = !startupError && chrome.exit === null
+  const mayRestart = chrome.exit === null && (timedOut || endpoint)
   const reason = startupError?.message ?? (timedOut ? 'не открыл порт отладки за 20 с' : `завершился до открытия порта отладки (${chrome.exit})`)
   const stopped = await stopChrome(chrome)
   const removed = stopped && removeTempProfile(profile)
   startupFailures.push(`Попытка ${attempt} (pid=${chrome.child.pid ?? 'нет'}): ${reason}.\n${chrome.log.trim() || 'stderr пуст'}`)
-  if (attempt < maxAttempts && timedOut && removed) {
-    // На Windows повторяем запуск в отдельной группе процессов, как cdp-screenshot --launch.
+  if (attempt < maxAttempts && mayRestart && removed) {
     console.error(`Chrome ${chromePath} ${reason}. Повторный запуск с новым временным профилем.`)
   } else {
     console.error(`Не удалось запустить Chrome ${chromePath}.\n${startupFailures.join('\n')}`)

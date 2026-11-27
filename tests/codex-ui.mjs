@@ -74,6 +74,19 @@ test('installed headless browser captures a real DOM change on mobile and deskto
       const spawn = childProcess.spawn;
       const timeout = globalThis.setTimeout;
       const profileArg = '--user-data-dir=';
+      let firstEndpoint;
+      globalThis.WebSocket = new Proxy(globalThis.WebSocket, {
+        construct(Socket, args) {
+          if (!firstEndpoint) {
+            firstEndpoint = args[0];
+            const socket = new EventTarget();
+            queueMicrotask(() => socket.dispatchEvent(new Event('error')));
+            return socket;
+          }
+          assert.equal(args[0], firstEndpoint);
+          return new Socket(...args);
+        }
+      });
       globalThis.setTimeout = (fn, ms, ...args) => timeout(fn, hungChild && !recovered && ms === 100 ? 1 : ms, ...args);
       childProcess.spawn = function (file, args, options) {
         const profile = args.find(arg => arg.startsWith(profileArg))?.slice(profileArg.length);
@@ -135,23 +148,32 @@ test('a rejected CDP socket stops the spawned browser and removes its profile', 
       const prefix = '--user-data-dir=';
       const profile = args.find(arg => arg.startsWith(prefix)).slice(prefix.length);
       const child = spawn(file, ['-e', 'setInterval(() => {}, 1000)'], options);
-      fs.writeFileSync('browser.json', JSON.stringify({profile, pid:child.pid}));
-      fs.writeFileSync(join(profile, 'DevToolsActivePort'), '1\\n/devtools/browser/9817fa46-244a-4ba6-88e6-f82c5c8f699d');
+      fs.appendFileSync('browsers.jsonl', JSON.stringify({profile, pid:child.pid}) + '\\n');
+      fs.writeFileSync(join(profile, 'DevToolsActivePort'), '10001\\n/devtools/browser/9817fa46-244a-4ba6-88e6-f82c5c8f699d');
       return child;
     };
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      webSocketDebuggerUrl: 'ws://127.0.0.1:10001/devtools/browser/9817fa46-244a-4ba6-88e6-f82c5c8f699d'
+    }));
     globalThis.WebSocket = class extends EventTarget {
       constructor() {
         super();
-        queueMicrotask(() => this.dispatchEvent(new Event('error')));
+        queueMicrotask(() => this.dispatchEvent(Object.assign(new Event('error'), {
+          error: new Error('Test CDP refusal\\nnext line')
+        })));
       }
     };
     syncBuiltinESMExports();
   `)
   await assert.rejects(run('cdp-run','scenario.json','--out','results.jsonl'), error =>
-    error.code === 2 && /нет подключения к ws:\/\/127\.0\.0\.1:1\/devtools\/browser\//.test(error.stderr))
-  const {profile,pid} = JSON.parse(fs.readFileSync(path.join(dir,'browser.json'),'utf8'))
-  assert.throws(() => process.kill(pid,0), {code:'ESRCH'})
-  assert.ok(!fs.existsSync(profile))
+    error.code === 2 && /нет подключения к ws:\/\/127\.0\.0\.1:10001\/devtools\/browser\//.test(error.stderr) &&
+    error.stderr.includes('Test CDP refusal next line'))
+  const browsers = fs.readFileSync(path.join(dir,'browsers.jsonl'),'utf8').trim().split('\n').map(JSON.parse)
+  assert.equal(browsers.length, process.platform === 'win32' ? 2 : 1)
+  for (const {profile,pid} of browsers) {
+    assert.throws(() => process.kill(pid,0), {code:'ESRCH'})
+    assert.ok(!fs.existsSync(profile))
+  }
 })
 
 test('standalone screenshot uses its own Chrome, reports DOM and saves full-page PNG', async t => {
