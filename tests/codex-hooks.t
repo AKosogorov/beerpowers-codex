@@ -86,7 +86,7 @@ for my $kind (keys %$registration) {
     ok(!$handler->{async} && $handler->{commandWindows} && $handler->{command},"$kind portable launchers");
 }
 my $matcher = $registration->{PreToolUse}[0]{matcher};
-like($_,qr/$matcher/,"matcher $_") for qw(Bash apply_patch request_user_input functions.request_user_input_async exec);
+like($_,qr/$matcher/,"matcher $_") for qw(Bash apply_patch request_user_input functions.request_user_input_async exec functions.exec_command);
 for my $mask (0..7) {
     local @ENV{qw(BEERPOWERS_REPLY_BLOCKING_ASKS BEERPOWERS_REPLY_FILE_LINKS BEERPOWERS_REPLY_USER_SHELL)} =
         map { $mask & 1<<$_ ? 'true' : 'false' } 0..2;
@@ -127,6 +127,25 @@ run_event('UserPromptSubmit',prompt=>'$beerpowers doctor');
 allowed(shell('git restore AGENTS.md'),'another command closes window');
 
 put("$ws/.codex/team-charter.md","fixture\n");
+my $safety = "$ws/.codex/rules/beerpowers-safety.rules";
+put($safety, "# fixture policy installed\n");
+for my $case (
+    'cd projects', 'sudo -n true', 'rm -r -f scratch', 'Remove-Item scratch -Recurse -Force',
+    'git -C "projects/ledger app" reset --hard', 'git -C worktrees/T-1/catalog clean -fd',
+    'php "projects/ledger app/artisan" migrate:fresh', 'php worktrees/T-1/catalog/artisan db:wipe',
+    '& php.exe .\\worktrees\\T-1\\catalog\\artisan migrate:reset',
+    'php -n -d memory_limit=256M -f projects/catalog/artisan -- migrate:reset',
+    qq{php "$repo/artisan" db:wipe},
+) {
+    denied(shell($case), 'guard-project-safety', "project policy blocks $case");
+}
+denied(hook('exec_command','php worktrees/T-1/catalog/artisan db:wipe'),
+    'guard-project-safety','direct exec_command event');
+allowed(shell('git -C "projects/ledger app" status --short'),'project policy permits Git status');
+allowed(shell('php projects/catalog/artisan migrate:status'),'project policy permits Artisan status');
+allowed(shell('php -f projects/catalog/artisan -- migrate:status'),'project policy permits status with explicit PHP script');
+allowed(shell('git reset --soft HEAD~1'),'project policy permits soft reset');
+unlink $safety or die $!;
 put("$ws/.codex/workspace.json",$json->encode({beerpowers=>'0.2.0'}));
 git_repo('init','-q','-b','main');
 put("$repo/tracked.py","print(1)\n");

@@ -45,7 +45,7 @@ my $source = $ENV{BEERPOWERS_TEST_SOURCE} // '';
 my $doctor = $mode eq 'doctor' || $operation;
 $ENV{GIT_OPTIONAL_LOCKS} = 0 if $operation;
 my $json = JSON::PP->new->utf8->canonical->pretty;
-my (@changes, @errors);
+my (@changes, @errors, @advisories);
 
 sub read_file {
     my ($path) = @_;
@@ -616,6 +616,17 @@ seed($workspace_file, $json->encode(\%workspace_defaults), sub {
 my $profile_add = !$doctor && -f $git_file && grep { !exists $existing_profiles{$_} } @repos;
 seed($git_file, $json->encode($git_settings), sub {1});
 push @changes, [$git_file, read_file($git_file), $json->encode($git_settings), 'replace'] if $profile_add;
+unless ($doctor) {
+    my $config = safe_path('.codex/config.toml');
+    my $profile = read_file("$Bin/../templates/settings/config.toml");
+    if (-f $config && read_file($config) =~ s/\r\n/\n/gr ne $profile =~ s/\r\n/\n/gr) {
+        my $message = "Existing $config kept. Check the active profile against the beerpowers template (templates/settings/config.toml).";
+        $machine_plan ? push(@advisories, $message) : print "$message\n";
+    }
+    seed($config, $profile, sub {1});
+    seed('.codex/rules/beerpowers-safety.rules',
+        read_file("$Bin/../templates/settings/beerpowers-safety.rules"), sub {1});
+}
 my @checks = map { $test_inputs{$_}{guide} // "memory/commands/$_.md" } @repos;
 my (%memory_notes, %memory_slots);
 my %command_index = map { (basename($test_inputs{$_}{guide} // "memory/commands/$_.md"),
@@ -1025,7 +1036,7 @@ if ($machine_plan) {
         +{ path => $path, action => $replace ? 'UPDATE' : defined($before) ? 'APPEND' : 'CREATE',
            content => encode_base64($content, '') };
     } @changes;
-    print STDOUT $json->encode({format => 1, changes => \@plan});
+    print STDOUT $json->encode({format => 1, changes => \@plan, @advisories ? (advisories => \@advisories) : ()});
     exit 0;
 }
 unless (@changes) { print "No changes.\n"; exit 0 }

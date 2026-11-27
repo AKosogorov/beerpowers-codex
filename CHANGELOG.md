@@ -4,6 +4,8 @@
 
 ## Готовится к выпуску
 
+- Setup поставляет профиль песочницы `beerpowers`, правила команд и запреты `PreToolUse` для checkout и worktree. [Запреты проекта](plugins/beerpowers/reference/hooks.md#запреты-проекта)
+
 - Setup сохраняет памятки команд с короткими именами. Doctor находит проверяемые дубли инструкций, проблемы гейтов и сломанные пути после миграции. Индекс техдолга пересобирается отдельной командой `tech-debt-index`. [Перенос из Claude](plugins/beerpowers/reference/claude-migration.md)
 
 - В setup можно выбрать состав команды и порядок согласования работы. Роли получают доменные инварианты, а для UI команда сохраняет выбранные ширины и условия сокращения матрицы. [Работа команды](plugins/beerpowers/reference/team-decisions.md) · [Приёмка UI](plugins/beerpowers/reference/ui-acceptance.md)

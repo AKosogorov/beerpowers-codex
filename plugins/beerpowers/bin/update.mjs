@@ -214,7 +214,8 @@ function plan(previous) {
     doc.after = doc.after.slice(0, start) + stamp(to) + doc.after.slice(end);
     doc.actions.push('rollback charter stamp only');
   }
-  for (const {path, action, addition} of downgrade ? [] : setupAdditions(root, pkg)) {
+  const setup = downgrade ? {changes:[], advisories:[]} : setupAdditions(root, pkg);
+  for (const {path, action, addition} of setup.changes) {
     const doc = document(path);
     if ((action === 'CREATE') !== (doc.after === null) || path === configPath) {
       throw Error('Setup preview conflicts with current workspace: ' + path);
@@ -237,6 +238,7 @@ function plan(previous) {
     ...doc, beforeHash:doc.before === null ? null : sha(doc.before), afterHash:sha(doc.after),
   }));
   const summary = {from, to, changes: changes.map(({path, actions, beforeHash, afterHash}) => ({path, actions, beforeHash, afterHash}))};
+  if (setup.advisories.length) summary.advisories = setup.advisories;
   return {changes, summary: {...summary, planId: sha(JSON.stringify([root, summary]))}};
 }
 
