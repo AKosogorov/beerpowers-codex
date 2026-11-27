@@ -46,7 +46,7 @@ const windowsNodeShards = {
   'node-3': [
     'codex-cli-help.test.mjs', 'codex-git-workspace.mjs', 'codex-make-shim.test.mjs', 'codex-memory.test.mjs',
     'codex-migrations.test.mjs', 'codex-onboard.test.mjs', 'codex-package-install.test.mjs', 'codex-pm.test.mjs',
-    'codex-qa.test.mjs', 'codex-setup-tracks.test.mjs', 'codex-token-audit.test.mjs', 'codex-tracker.test.mjs',
+    'codex-qa.test.mjs', 'codex-release-version.test.mjs', 'codex-setup-tracks.test.mjs', 'codex-token-audit.test.mjs', 'codex-tracker.test.mjs',
     'codex-workspace-clean.test.mjs',
   ],
 };

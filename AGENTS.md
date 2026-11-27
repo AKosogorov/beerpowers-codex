@@ -23,4 +23,8 @@
 
 ## Выпуск
 
-Для выпуска согласованной версии обновите `version` в манифесте Codex и добавьте непустой раздел `## <версия> — <ГГГГ-ММ-ДД>` в [CHANGELOG](CHANGELOG.md). После push изменения манифеста в `main` [GitHub Actions](.github/workflows/release.yml) запускает проверки и создаёт GitHub Release с тегом `v<версия>` на этом коммите. Уже опубликованная версия пропускается.
+В каждом PR в `main` с изменениями в `plugins/beerpowers/` повысьте `version` в [манифесте Codex](plugins/beerpowers/.codex-plugin/plugin.json) относительно `main` и добавьте непустой раздел `## <версия> — <ГГГГ-ММ-ДД>` в [CHANGELOG](CHANGELOG.md). Для исправлений повышайте patch, для новых возможностей — minor. Изменения поставляемых шаблонов и генерации также внесите в [реестр миграций](plugins/beerpowers/reference/migrations.md) под тем же номером.
+
+Перед публикацией PR обновите `origin/main` через `git fetch` и запустите `node .github/scripts/check_release.mjs origin/main`. Проверка `release-version` повторяет её в CI для результата слияния с `main`. Если другой PR уже занял выбранную версию, выполните rebase и обновите номер в манифесте, CHANGELOG и записи миграции.
+
+После попадания манифеста с новой версией в `main` [GitHub Actions](.github/workflows/release.yml) запускает проверки и создаёт GitHub Release с тегом `v<версия>` на этом коммите. Уже опубликованная версия пропускается.
