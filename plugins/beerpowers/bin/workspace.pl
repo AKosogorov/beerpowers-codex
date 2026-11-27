@@ -21,7 +21,7 @@ workspace.pl task-plan|task-start TASK [options]
 workspace.pl review-diff TASK BASE_SHA TESTED_SHA
 workspace.pl handover TASK pause|check|clear
 workspace.pl feature-state TASK [EVENT]
-workspace.pl role-packet ROLE [PRODUCT_RELATIVE_PATH...]
+workspace.pl role-packet ROLE [PROJECT_RELATIVE_PATH...]
 USAGE
 if ($mode eq '--help' || (@ARGV == 1 && $ARGV[0] eq '--help' && $mode =~ /\A(?:plan|apply|doctor|task-plan|task-start|review-diff|handover|feature-state|role-packet)\z/)) {
     print $usage;
@@ -91,10 +91,10 @@ for my $name (@repos) {
     die "Unsupported repository name: $name\n" unless $name =~ /\A[A-Za-z0-9_][A-Za-z0-9_.-]*\z/;
     my $path = safe_path("projects/$name");
     safe_path("$path/.git");
-    die "Invalid product checkout: $path\n" unless git_output('-C', $path, 'rev-parse', '--show-prefix') =~ /^\s*$/;
+    die "Invalid project checkout: $path\n" unless git_output('-C', $path, 'rev-parse', '--show-prefix') =~ /^\s*$/;
 }
 my $repo = $operation && length($ENV{BEERPOWERS_REPO} // '') ? $ENV{BEERPOWERS_REPO} : $repos[0];
-die "Unknown selected product: $repo\n" unless grep { $_ eq $repo } @repos;
+die "Unknown selected project: $repo\n" unless grep { $_ eq $repo } @repos;
 my $product = safe_path("projects/$repo");
 die "Outer Git already tracks projects/ or worktrees/. Review its index before setup.\n"
     if length git_output('ls-files', '--', 'projects/', 'worktrees/');
@@ -111,12 +111,37 @@ sub source_exists {
     return defined($path) && length($path) && $path !~ /[\r\n\x60]/ && -f safe_path("$product/$path");
 }
 
+sub gate_sections {
+    return $_[0] =~ /^ {0,3}##[ \t]+Гейты[ \t]*\r?\n(.*?)(?=^ {0,3}#{1,2}[ \t]|\z)/msg;
+}
+
+sub command_guide {
+    my ($name) = @_;
+    my $dir = 'memory/commands';
+    my $default = safe_path("$dir/$name.md");
+    return $default if -e $default || !-d $dir;
+    opendir my $entries, $dir or die "$dir: $!\n";
+    my @notes = sort grep { /\A[A-Za-z0-9_][A-Za-z0-9_.-]*\.md\z/ && lc($_) ne 'readme.md' &&
+        !-l "$dir/$_" && -f "$dir/$_" } readdir $entries;
+    closedir $entries;
+    my @matching = grep {
+        my $body = markdown_prose(read_file(safe_path("$dir/$_")));
+        $body =~ s/<!--.*?(?:-->|\z)//gs;
+        $body =~ /^Каталог запуска: \x60projects\/\Q$name\E\/\x60\r?$/m ||
+            grep { /(?<!\x60)\x60\s*npm[ \t]+--prefix[ \t]+(?:\.\/)?projects\/\Q$name\E\/?[ \t]+run[ \t]/ }
+                gate_sections($body)
+    } @notes;
+    die "$dir: multiple command guides for $name: @matching\n" if @matching > 1;
+    return @matching ? "$dir/$matching[0]" : $default;
+}
+
 sub legacy_npm_gate {
     my ($prose, $product) = @_;
-    my @sections = $prose =~ /^ {0,3}##[ \t]+Гейты[ \t]*\n(.*?)(?=^ {0,3}#{1,2}[ \t]|\z)/msg;
+    my @sections = gate_sections($prose);
     my @gates = grep { /\A[ \t]*npm(?:[ \t]|\z)/ }
         ($sections[0] // '') =~ /(?<!\x60)\x60([^\x60\n]+)\x60(?!\x60)/g;
-    die "ambiguous npm gate in section Гейты\n" if @sections > 1 || @gates > 1;
+    die "ambiguous npm gate in section Гейты\n" if @sections > 1 ||
+        (@gates && 1 < grep { $_ eq $gates[0] } @gates);
     die "missing inline npm gate in section Гейты\n" unless @gates;
 
     # Разбираем только литералы и известную обёртку логирования.
@@ -129,7 +154,7 @@ sub legacy_npm_gate {
 
     my ($prefix, $script, $args) = trim_cell($invocation) =~
         /\Anpm[ \t]+--prefix[ \t]+($word)[ \t]+run[ \t]+([A-Za-z0-9_][-A-Za-z0-9_.:]*)((?:[ \t]+$word)*)\z/;
-    die "unsupported npm gate; expected npm --prefix <product> run <script> [args]\n" unless defined $prefix;
+    die "unsupported npm gate; expected npm --prefix <project> run <script> [args]\n" unless defined $prefix;
     die "npm --prefix points to $prefix, expected $product\n" unless $prefix =~ m{\A(?:\./)?\Q$product\E/?\z};
     my @args = split ' ', $args;
     for my $arg (@args) {
@@ -187,13 +212,13 @@ my $checks_json = $doctor ? '' : ($ENV{BEERPOWERS_TESTS_JSON} // '');
 my $read_saved_checks = $doctor || ($machine_plan && !length($checks_json));
 if (length $checks_json) {
     my $input = parse_json($checks_json);
-    die "BEERPOWERS_TESTS_JSON must map every product to its command, source and profile\n"
+    die "BEERPOWERS_TESTS_JSON must map every project to its command, source and profile\n"
         unless ref($input) eq 'HASH' && keys(%$input) == @repos;
     %test_inputs = %$input;
 } elsif (!$read_saved_checks && @repos == 1) {
     $test_inputs{$repo} = {command => $command, source => $source};
 } elsif (!$read_saved_checks) {
-    die "Set BEERPOWERS_TESTS_JSON with checks for every product: @repos\n";
+    die "Set BEERPOWERS_TESTS_JSON with checks for every project: @repos\n";
 }
 for my $name (@repos) {
     my $product = "projects/$name";
@@ -205,8 +230,8 @@ for my $name (@repos) {
         if exists $existing_profiles{$name} && $existing_profiles{$name} ne $profile;
     if ($doctor && !exists $existing_profiles{$name}) { push @errors, "$git_file: missing profile for $name" }
     $git_settings->{repos}{$name} = $profile;
-    print "Product: $product\nProfile: $profile\n";
-    my $guide = safe_path("memory/commands/$name.md");
+    print "Project: $product\nProfile: $profile\n";
+    my $guide = command_guide($name);
     my ($cmd, $src) = @{$params}{qw(command source)};
     if (!$read_saved_checks) {
         die "Expected non-empty test command for $name\n" unless defined($cmd) && !ref($cmd) && $cmd =~ /\S/ && $cmd !~ /[\r\n\x00]/;
@@ -228,7 +253,7 @@ for my $name (@repos) {
     } else {
         die "$guide: Test source missing in $product: $src\n" unless source_exists($product, $src);
     }
-    @{$test_inputs{$name}}{qw(command source)} = ($cmd, $src);
+    @{$test_inputs{$name}}{qw(command source guide)} = ($cmd, $src, $guide);
     print "Tests (cwd $product): $cmd\nSource: $src\n" unless $doctor;
 }
 
@@ -335,7 +360,7 @@ sub render_sections {
     $body =~ s/^\{\{([A-Z_]+)\}\}\r?\n/exists $slots->{$1} ? "$slots->{$1}\n" : ''/gme;
     return $body;
 }
-my $roster_header = '| Роль | Продукты | Read on spawn |';
+my $roster_header = '| Роль | Проекты | Read on spawn |';
 my $command_index_header = '| Файл | Что внутри | Кому |';
 sub trim_cell { return $_[0] =~ s/^[ \t]+|[ \t]+$//gr }
 sub table_cells {
@@ -357,7 +382,7 @@ sub roster_row {
     push @read, '`memory/project/project-map.md`' unless $role eq 'tester' || $role eq 'reviewer';
     push @read, '`memory/tests/probes.md`' if $role eq 'tester';
     push @read, '`memory/product-*.md` (если созданы)' if $role eq 'product';
-    push @read, map { "`memory/commands/$_.md`" } @products;
+    push @read, map { '`' . ($test_inputs{$_}{guide} // "memory/commands/$_.md") . '`' } @products;
     return "| `$role` | " . join(', ', @products) . ' | ' . join(', ', @read) . ' |';
 }
 sub roster_rows {
@@ -388,6 +413,7 @@ sub edit_setup_table {
         $active = $line eq $section if defined($section) && $line =~ /^#{1,2} /;
         next unless $active && $line =~ /^ {0,3}\|/;
         my @columns = map { trim_cell($_) } table_cells($line);
+        @columns = map { $_ eq 'Продукты' ? 'Проекты' : $_ } @columns if $header eq $roster_header;
         my @delimiter = map { trim_cell($_) } table_cells($lines[$i + 1]);
         next unless @columns == @delimiter && !grep { !/^:?-{3,}:?$/ } @delimiter;
         my %positions;
@@ -471,7 +497,7 @@ if (!$doctor && !$machine_plan && length($ENV{BEERPOWERS_VIEWPORTS_JSON} // ''))
 if (!$doctor && !$machine_plan && length($ENV{BEERPOWERS_PARALLEL_TESTS_JSON} // '')) {
     my $proposed = parse_json($ENV{BEERPOWERS_PARALLEL_TESTS_JSON});
     my %known = map { $_ => 1 } @repos;
-    die "Expected parallel tests for known products\n" unless ref($proposed) eq 'HASH' &&
+    die "Expected parallel tests for known projects\n" unless ref($proposed) eq 'HASH' &&
         ref($proposed->{repos}) eq 'HASH' && keys(%{$proposed->{repos}}) &&
         !grep { !$known{$_} } keys %{$proposed->{repos}};
     my $node = $ENV{BEERPOWERS_NODE} || 'node';
@@ -524,9 +550,10 @@ seed($workspace_file, $json->encode(\%workspace_defaults), sub {
 my $profile_add = !$doctor && -f $git_file && grep { !exists $existing_profiles{$_} } @repos;
 seed($git_file, $json->encode($git_settings), sub {1});
 push @changes, [$git_file, read_file($git_file), $json->encode($git_settings), 'replace'] if $profile_add;
-my @checks = map { "memory/commands/$_.md" } @repos;
+my @checks = map { $test_inputs{$_}{guide} // "memory/commands/$_.md" } @repos;
 my (%memory_notes, %memory_slots);
-my %command_index = map { ("$_.md", ['Штатные проверки репозитория ' . $_, 'Роли этого продукта и тимлид']) } @repos;
+my %command_index = map { (basename($test_inputs{$_}{guide} // "memory/commands/$_.md"),
+    ['Штатные проверки проекта ' . $_, 'Роли этого проекта и тимлид']) } @repos;
 my (%scope_notes, %requested_index);
 $memory_slots{INVARIANTS_DETAILED} = 'При setup не выявлены.';
 if (!$doctor && !$machine_plan && length($ENV{BEERPOWERS_MEMORY_JSON} // '')) {
@@ -571,7 +598,7 @@ if (!$doctor && !$machine_plan && length($ENV{BEERPOWERS_MEMORY_JSON} // '')) {
     }
     my $commands = exists $input->{commands} ? $input->{commands} : {};
     my %known_repos = map { $_ => 1 } @repos;
-    die "Expected command notes keyed by known product in BEERPOWERS_MEMORY_JSON\n"
+    die "Expected command notes keyed by known project in BEERPOWERS_MEMORY_JSON\n"
         unless ref($commands) eq 'HASH' && !grep { !$known_repos{$_} } keys %$commands;
     my @notes = (
         (exists $input->{safetyRules} ? ['project/safety-rules.md', 'Проектные запреты', $input->{safetyRules}] : ()),
@@ -653,7 +680,9 @@ if (!$doctor && keys %requested_index) {
         seed($path, $render_memory->("$Bin/../templates/memory/commands/README.md"));
     }
 }
-seed('memory/MEMORY.md', $index . "\n" . join('', map { "- [Проверки $_](commands/$_.md)\n" } @repos));
+seed('memory/MEMORY.md', $index . "\n" . join('', map {
+    "- [Проверки $_](commands/" . basename($test_inputs{$_}{guide} // "memory/commands/$_.md") . ")\n"
+} @repos));
 if ($shared_memory && !$doctor) {
     my %sections = (
         'project/domain-invariants.md' => 1,
@@ -668,11 +697,11 @@ if ($shared_memory && !$doctor) {
     }
 }
 for my $name ($read_saved_checks ? () : @repos) {
-    my $path = "memory/commands/$name.md";
+    my $path = $test_inputs{$name}{guide} // "memory/commands/$name.md";
     next if -f $path;
     my $product = "projects/$name";
     my ($command, $source) = @{$test_inputs{$name} // {}}{qw(command source)};
-    my $test_doc = "# Команды — $name\n\n## Гейты\n\nПолный прогон тестов. При setup команда записана по источнику и не прогонялась.\n\nКаталог запуска: \x60$product/\x60\nИсточник: \x60$source\x60\n\n```text\n$command\n```\n";
+    my $test_doc = "# Команды — $name\n\n## Гейты\n\nШтатная проверка. Команда записана по источнику и не запускалась при setup.\n\nКаталог запуска: \x60$product/\x60\nИсточник: \x60$source\x60\n\n```text\n$command\n```\n";
     $test_doc .= $memory_notes{"commands/$name.md"} // '';
     seed($path, $test_doc);
 }
@@ -742,7 +771,7 @@ for my $document (@charter_seed) {
             });
             if (!defined($after) && length($roster_track) &&
                 markdown_prose($before) =~ /^## Состав\r?\n(?:(?!^#{1,2} ).)*^\|/ms) {
-                push @errors, "$path: roster table needs unique columns Роль, Продукты and Read on spawn";
+                push @errors, "$path: roster table needs unique columns Роль, Проекты and Read on spawn";
             }
             if (defined($after) && $after ne $before) {
                 if (length $charter_extra) {
@@ -773,20 +802,29 @@ if (index($instructions, $begin) < 0 && !$doctor) {
     index($1, '(.codex/team-charter.md)') < 0 || index($1, '(.codex/team-lead.md)') < 0) {
     push @errors, "$agents: missing or incomplete charter/lead entry";
 }
-my $role_begin = '<!-- beerpowers:role-packet -->';
-my $role_end = '<!-- /beerpowers:role-packet -->';
-my $guide = 'Тимлид читает .codex/role-settings.json и применимые .codex/rules/ перед работой с продуктом. Для ролевых задач BeerPowers явно передаёт инструкции через role-packet. При смене путей подбери правила заново. Запись в память роли ограничена её каталогом .codex/agent-memory/.';
-if (index($instructions, $role_begin) < 0 && !$doctor && index($instructions, $role_end) < 0) {
-    $extra .= "\n$role_begin\n$guide\n$role_end\n";
-} elsif ($instructions !~ /\Q$role_begin\E(?:(?!\Q$role_end\E).)*role-packet(?:(?!\Q$role_end\E).)*\Q$role_end\E/s) {
-    push @errors, "$agents: missing or incomplete role-packet entry; run setup";
+my $entry_replaced = 0;
+if (!$doctor && -f $agents) {
+    my $before = read_file($agents);
+    my $after = $before;
+    my %retired_entry = (
+        'role-packet' => 'Тимлид читает .codex/role-settings.json и применимые .codex/rules/ перед работой с продуктом. Для ролевых задач BeerPowers явно передаёт инструкции через role-packet. При смене путей подбери правила заново. Запись в память роли ограничена её каталогом .codex/agent-memory/.',
+        'products' => 'Для каждого выбранного продукта команды берутся из memory/commands/<репо>.md, профиль из .codex/git-settings.json, правила роли из .codex/role-settings/<репо>.json. Выбирай продукт через BEERPOWERS_REPO.',
+    );
+    for my $name (sort keys %retired_entry) {
+        my $line = $retired_entry{$name};
+        my $block = qr/^<!-- beerpowers:\Q$name\E -->\r?\n\Q$line\E\r?\n<!-- \/beerpowers:\Q$name\E -->(?:\r?\n|\z)/m;
+        # An identical example in a code fence makes replacement ambiguous.
+        my @occurrences = $after =~ /$block/g;
+        $after =~ s/(?:^\r?\n)?$block// if @occurrences == 1 && $instructions =~ $block;
+    }
+    if ($after ne $before) {
+        my $newline = $before =~ /\r\n/ ? "\r\n" : "\n";
+        $after .= $extra =~ s/\n/$newline/gr;
+        replace_setup_file($agents, $after);
+        $entry_replaced = 1;
+    }
 }
-if (@repos > 1 && index($instructions, '<!-- beerpowers:products -->') < 0) {
-    my $guide = 'Для каждого выбранного продукта команды берутся из memory/commands/<репо>.md, профиль из .codex/git-settings.json, правила роли из .codex/role-settings/<репо>.json. Выбирай продукт через BEERPOWERS_REPO.';
-    if ($doctor) { push @errors, "$agents: missing multi-product entry; run setup" }
-    else { $extra .= "\n<!-- beerpowers:products -->\n$guide\n<!-- /beerpowers:products -->\n"; }
-}
-append_lines($agents, $extra) if length $extra;
+append_lines($agents, $extra) if length($extra) && !$entry_replaced;
 
 my %ignore = ("projects/$repo/probe" => '/projects/', "worktrees/BP-1/$repo/probe" => '/worktrees/',
     '.codex/.cache/probe' => '/.codex/.cache/');
@@ -818,7 +856,7 @@ append_lines('.gitignore', join('', @rules)) if @rules;
 die join("\n", @errors) . "\n" if @errors;
 if ($packet) {
     die "Choose BEERPOWERS_REPO for role-packet: @repos\n" if @repos > 1 && !length($ENV{BEERPOWERS_REPO} // '');
-    role_packet(dirname($Bin), $repo, @ARGV); exit 0;
+    role_packet(dirname($Bin), $repo, $test_inputs{$repo}{guide}, @ARGV); exit 0;
 }
 if ($review || $handover || $feature) {
     my $code = $ARGV[0] // '';
@@ -826,12 +864,12 @@ if ($review || $handover || $feature) {
     my $file = safe_path("memory/tasks/$code/checkouts.json");
     if (-f $file) {
         my $records = parse_json(read_file($file))->{repos};
-        die "Invalid task products in $file\n" unless ref($records) eq 'ARRAY' && @$records;
+        die "Invalid task projects in $file\n" unless ref($records) eq 'ARRAY' && @$records;
         if (!length($ENV{BEERPOWERS_REPO} // '')) {
             die "Choose BEERPOWERS_REPO for $code\n" unless @$records == 1;
             $repo = $records->[0]{name};
         }
-        die "Unknown product in $file\n" unless grep { $_ eq $repo } @repos;
+        die "Unknown project in $file\n" unless grep { $_ eq $repo } @repos;
         my @matching = grep { ($_->{name} // '') eq $repo } @$records;
         die "Expected one $repo checkout in $file\n" unless @matching == 1;
         $product = $matching[0]{checkout} // '';

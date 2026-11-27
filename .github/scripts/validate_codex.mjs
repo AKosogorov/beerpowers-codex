@@ -15,7 +15,7 @@ const pkg = 'plugins/beerpowers';
 // Keep this contract runnable with only the Codex checkout.
 const upstream = {name: 'beerpowers', version: '2.20.0', commit: '7c5bb1221d65b5c46c8af96fe7bc4ce979fc596e'};
 const publicCommands = ['decision-brief', 'doctor', 'feature', 'onboard', 'product-onboard', 'retro', 'setup',
-  'task-start', 'team-down', 'team-lazy', 'team-up', 'token-audit', 'tracker', 'update', 'worktrees-clear'];
+  'task-start', 'team-down', 'team-lazy', 'team-up', 'tech-debt-index', 'token-audit', 'tracker', 'update', 'worktrees-clear'];
 const automaticSkills = ['brainstorm', 'debug-loop', 'economy', 'grill', 'minimal-diff', 'page-screenshot',
   'prototype', 'summarizing-mr-links', 'tracker-task'];
 const agents = ['architect','auditor','backend','database','devops','explorer','frontend','product','reviewer','testing'];
@@ -75,7 +75,7 @@ function packageChecks() {
     assert.equal(manifest.skills, './skills/');
     assert.deepEqual(manifest.upstream, upstream);
   });
-  check('Nine automatic skills and an explicit adapter for 15 commands', () => {
+  check('Nine automatic skills and an explicit adapter for 16 commands', () => {
     const installedSkills = ['beerpowers', ...automaticSkills];
     assert.deepEqual(files(pkg + '/skills').filter(path => basename(path) === 'SKILL.md').sort(),
       installedSkills.map(name => `${pkg}/skills/${name}/SKILL.md`));

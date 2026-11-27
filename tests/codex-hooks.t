@@ -150,6 +150,13 @@ denied(shell('bash opaque-script.sh; git push origin main'),'guard-push','opaque
 denied(shell('& git.exe push origin main'),'guard-push','PowerShell call operator');
 allowed(shell('git push --force-with-lease origin feature'),'explicit feature ref');
 allowed(shell('echo "git push origin main"'),'quoted data');
+my $probe_remote = "$tmp/push-probe.git";
+system('git','init','-q','--bare',$probe_remote) == 0 or die 'prepare probe remote';
+my $probe = shell(qq{git -C "$repo" push "$probe_remote" HEAD:refs/heads/main});
+denied($probe,'guard-push','literal git -C cannot update the protected branch');
+git_repo('push','-q',$probe_remote,'HEAD:refs/heads/main') unless decision($probe) eq 'deny';
+is(system('git','-C',$probe_remote,'show-ref','--verify','--quiet','refs/heads/main') >> 8, 1,
+    'protected ref remains absent when the command runner honors deny');
 denied(shell('Stop-Process -Name dummy'),'guard-kill','PowerShell process name');
 denied(shell('Write-Output ok; taskkill.exe /F /IM nothing.exe'),'guard-kill','later command');
 allowed(shell('Stop-Process -Id 999999'),'own PID shape');
@@ -244,6 +251,15 @@ is_deeply(hook('apply_patch',patch("*** Add File: new.js\n+x"),'PostToolUse'),{}
 put("$ws/.codex/quality-gates.txt","*.vue|*.ts Combined\n*.vue Later\n");
 for my $file ('projects/web/src/form.vue','worktrees/T/web/form.ts') {
     like(hook('apply_patch',patch("*** Add File: $file\n+x"),'PostToolUse')->{additionalContext},qr/^Combined$/,'first alternative rule for '.$file);
+}
+put("$ws/.codex/quality-gates.txt", "*/projects/web/*.vue|*/worktrees/*/web/*.vue Lint Vue\n" .
+    "*/projects/web/*|*/worktrees/*/web/* Build web\n");
+for my $base ('projects/web', 'worktrees/T/web') {
+    for my $case (['src/form.vue', 'Lint Vue'], ['Dockerfile', 'Build web']) {
+        my ($file, $expected) = @$case;
+        my $event = hook('apply_patch',patch("*** Add File: $base/$file\n+x"),'PostToolUse');
+        is($event->{additionalContext}, $expected, "first relevant gate for $base/$file");
+    }
 }
 put("$ws/.codex/quality-gates.txt",'');
 is_deeply(hook('apply_patch',patch("*** Add File: form.vue\n+x"),'PostToolUse'),{},'empty rules disable reminder');

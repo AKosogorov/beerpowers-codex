@@ -17,13 +17,13 @@ export function localDestinations(markdown) {
 
 const createdLater = new Set(['memory/decisions.md', 'memory/product-map.md', 'memory/product-actors.md',
   'memory/product-glossary.md', 'memory/product-metrics.md']);
-
 function markdownFiles(root, relative) {
   const path = workspacePath(root, relative);
   if (!lstatSync(path, {throwIfNoEntry: false})?.isDirectory()) return [];
   return readdirSync(path, {withFileTypes: true}).flatMap(entry => {
     const source = relative + '/' + entry.name;
-    if (['memory/tasks', '.codex/agent-memory', '.codex/agent-memory-local', '.codex/.cache'].includes(source)) return [];
+    if (['.codex/agent-memory', '.codex/agent-memory-local', '.codex/.cache'].includes(source)) return [];
+    if (source.startsWith('memory/tasks/') && ['tracker', 'figma', 'screenshots'].includes(entry.name)) return [];
     if (entry.isDirectory()) return markdownFiles(root, source);
     return entry.isFile() && entry.name.endsWith('.md') ? [source] : [];
   });
@@ -31,6 +31,8 @@ function markdownFiles(root, relative) {
 
 export function workspaceLinks(root) {
   const index = 'memory/MEMORY.md';
+  const codexBasenames = new Set(['team-lead.md', 'team-charter.md', 'workspace.json',
+    ...markdownFiles(root, '.codex/rules').map(file => posix.basename(file))]);
   const files = [index, ...['AGENTS.md', 'README.md'].filter(file =>
     lstatSync(workspacePath(root, file), {throwIfNoEntry:false})?.isFile()),
     ...['.codex', 'memory'].flatMap(dir => markdownFiles(root, dir)).filter(file => file !== index)].sort();
@@ -38,8 +40,15 @@ export function workspaceLinks(root) {
   let localLinks = 0;
   for (const source of files) {
     const body = readFileSync(workspacePath(root, source), 'utf8');
-    const destinations = localDestinations(body).map(reference => ({reference, base:posix.dirname(source)}));
-    for (const [, reference] of documentBody(body).matchAll(/`((?:memory|\.codex)\/[\p{L}\p{N}_./-]+\.(?:md|mjs|pl|json|html))`/gu)) {
+    const base = posix.dirname(source);
+    const prose = documentBody(body);
+    const destinations = source.startsWith('memory/tasks/') ? []
+      : localDestinations(body).map(reference => ({reference, base}));
+    for (const [, reference] of prose.matchAll(/(?<!\x60)\x60([^\x60\r\n]+)\x60(?!\x60)/g)) {
+      if (codexBasenames.has(reference)) destinations.push({reference, base});
+    }
+    for (const [, reference] of prose.matchAll(/`((?:memory|\.codex)\/[\p{L}\p{N}_./-]+\.(?:md|mjs|pl|json|html))`/gu)) {
+      if (source.startsWith('memory/tasks/') && !reference.startsWith('.codex/')) continue;
       if (/NNN|\.local\.json$|-settings\.json$/.test(reference) || createdLater.has(reference)) continue;
       destinations.push({reference, base:'.'});
     }
@@ -55,6 +64,7 @@ export function workspaceLinks(root) {
       }
     }
   }
-  return {source: index, files: files.length, localLinks, missing: broken.filter(link => link.source === index)
-    .map(link => link.reference), broken};
+  const uniqueBroken = [...new Map(broken.map(link => [JSON.stringify(link), link])).values()];
+  return {source: index, files: files.length, localLinks, missing: uniqueBroken.filter(link => link.source === index)
+    .map(link => link.reference), broken: uniqueBroken};
 }

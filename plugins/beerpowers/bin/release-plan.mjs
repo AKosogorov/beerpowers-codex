@@ -1,4 +1,4 @@
-// Строит dry-run плана выпуска по целевым веткам и ревизиям. Проверяет, что исходные ветки актуальны и выбранный способ выпуска разрешён профилем продукта.
+// Строит dry-run плана выпуска по целевым веткам и ревизиям. Проверяет, что исходные ветки актуальны и выбранный способ выпуска разрешён профилем проекта.
 // Строит план выпуска по проектному Git-профилю и проверенным ревизиям.
 import fs from 'node:fs';
 import { branchName, discover, fail, git, profileDetails, remoteState, safe } from './lib/git-repositories.mjs';
@@ -9,14 +9,14 @@ showHelp('release-plan.mjs REPO planned [RELEASE_BRANCH] | REPO urgent TASK SHA'
 
 function release(name, mode, task, selection) {
   const repo = discover().find(r => r.name === name);
-  if (!repo) fail('Неизвестный продукт');
+  if (!repo) fail('Неизвестный проект');
   const state = remoteState(repo);
   const { defaultBranch, release: production } = profileDetails(repo, state);
   const result = { profile: repo.profile, defaultBranch };
   if (repo.profile === 'custom') {
     const lines = fs.readFileSync(safe('memory/commands/git.md'), 'utf8').split(/\r?\n/);
     const start = lines.findIndex(line => /^##\s+/.test(line) && line.replace(/^##\s+/, '').replaceAll('`', '').trim() === name);
-    if (start < 0) fail('Нет раздела продукта в memory/commands/git.md');
+    if (start < 0) fail('Нет раздела проекта в memory/commands/git.md');
     const next = lines.findIndex((line, i) => i > start && /^#{1,2}\s/.test(line));
     const instructions = lines.slice(start + 1, next < 0 ? undefined : next).join('\n').trim();
     if (!instructions) fail('Пустой раздел проекта');

@@ -14,6 +14,9 @@ my $result = {status => 'ignored'};
 if ($input =~ m{\A\s*(?:\$beerpowers|\[\$beerpowers\]\(skill://beerpowers\))
                (?=\s|\z)\s*(?:(\S+)(.*))?\z}sx) {
     my ($name, $tail) = ($1, $2);
+    if (defined($name) && $name eq 'doctor' && $tail =~ /^\s+tech-debt-index\s*$/) {
+        ($name, $tail) = ('tech-debt-index', '');
+    }
     my $directory = "$Bin/../commands";
     opendir my $entries, $directory or die "$directory: $!\n";
     my @commands = sort map { s/\.md\z//r }

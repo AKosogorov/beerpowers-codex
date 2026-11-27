@@ -182,7 +182,7 @@ test('expanded doctor reconciles installed resources without writing or reading 
   assert.equal(checks.usage.evidence.tokens, null);
   assert.equal(run('git', ['status', '--porcelain']), '');
   assert.deepEqual(JSON.parse(run(process.execPath, [update, 'plan'])).changes, []);
-  assert.ok(readFileSync(join(root, 'AGENTS.md'), 'utf8').includes('role-packet'));
+  assert.ok(readFileSync(join(root, 'AGENTS.md'), 'utf8').includes('.codex/team-charter.md'));
 });
 
 test('multi-product migration reuses each saved command and extended doctor reports both scopes', t => {
@@ -216,6 +216,62 @@ test('expanded doctor returns separate failures and keeps hand-edited files inta
   assert.deepEqual(checks['memory-links'].evidence.missing, ['project/missing.md']);
   assert.equal(checks.host.status, 'unavailable');
   assert.equal(readFileSync(index, 'utf8'), original);
+});
+
+test('doctor catches shortened Codex paths in retro and task artefacts', t => {
+  const {root, report} = workspace(t);
+  const retro = 'memory/retro-log.md';
+  const task = 'memory/tasks/vue-tsc';
+  mkdirSync(join(root, task), {recursive:true});
+  mkdirSync(join(root, '.codex/rules'), {recursive:true});
+  writeFileSync(join(root, '.codex/rules/front-components.md'), '# Правила компонентов\n');
+  writeFileSync(join(root, retro), 'Правило записано в `team-lead.md`.\n');
+  for (const name of ['handover', 'preflight', 'test-cases']) {
+    const reference = name === 'test-cases' ? 'workspace.json' : 'front-components.md';
+    writeFileSync(join(root, task, name + '.md'), 'Источник: `' + reference + '`.\n');
+  }
+  const {code, checks} = report();
+  assert.equal(code, 1);
+  assert.deepEqual(checks['memory-links'].evidence.broken.map(({source, reference}) => [source, reference]), [
+    [retro, 'team-lead.md'], [task + '/handover.md', 'front-components.md'],
+    [task + '/preflight.md', 'front-components.md'], [task + '/test-cases.md', 'workspace.json'],
+  ]);
+  writeFileSync(join(root, retro), 'Правило записано в `.codex/team-lead.md`.\n');
+  for (const name of ['handover', 'preflight', 'test-cases']) {
+    writeFileSync(join(root, task, name + '.md'), 'Снимок настройки: `9d81bd5:.claude/workspace.json`.\n');
+  }
+  assert.equal(report().checks['memory-links'].status, 'pass');
+});
+
+test('doctor flags appended brief and memory instructions and Claude masks in the entry', t => {
+  const {root, report} = workspace(t);
+  const add = (file, suffix) => {
+    const path = join(root, file);
+    writeFileSync(path, readFileSync(path, 'utf8') + suffix);
+  };
+  const role = '.codex/agents/architect-agent.md';
+  const index = '.codex/agent-memory/architect/MEMORY.md';
+  add(role, '\n## Свои правила\n\nТы архитектор проекта Demo. Детали роли.\n\nТы архитектор проекта Demo.\n');
+  add(index, '\n# Память роли architect-agent\n\nСюда — только \x60feedback_*.md\x60: поправки человека к работе роли.\n');
+  add('AGENTS.md', '\n- \x60Read(./**/.env)\x60\n');
+  const {code, checks} = report();
+  assert.equal(code, 1);
+  assert.match(JSON.stringify(checks['instruction-duplicates'].evidence), /architect-agent\.md/);
+  assert.match(JSON.stringify(checks['role-memory'].evidence), /architect\/MEMORY\.md/);
+  assert.match(JSON.stringify(checks['entry-policy'].evidence), /AGENTS\.md/);
+});
+
+test('doctor detects shadowed quality gates while preserving distinct fallbacks', t => {
+  const {root, report} = workspace(t);
+  const file = join(root, '.codex/quality-gates.txt');
+  const specific = '*/projects/app/*.vue|*/worktrees/*/app/*.vue Линт по файлу\n';
+  const fallback = '*/projects/app/*|*/worktrees/*/app/* Сборка по проекту\n';
+  writeFileSync(file, fallback + specific);
+  const {checks} = report();
+  assert.equal(checks['quality-gates'].status, 'fail');
+  assert.match(checks['quality-gates'].evidence.join('\n'), /скрыта общим правилом/);
+  writeFileSync(file, specific + fallback);
+  assert.equal(report().checks['quality-gates'].status, 'pass');
 });
 
 test('doctor checks local links across project memory and Codex docs without following junctions', t => {
@@ -255,18 +311,18 @@ test('doctor checks manual and generated debt indexes, with explicit refresh pre
   writeFileSync(index, note + '[Пункт](001-first.md)\r\n');
   assert.equal(report().checks['tech-debt-index'].status, 'pass');
 
-  const args = [join(bin, 'doctor.mjs'), 'tech-debt-index'];
-  run(process.execPath, args);
+  const args = [join(bin, 'tech-debt-index.mjs')];
+  assert.equal(JSON.parse(run(process.execPath, args)).changed, true);
   const generated = readFileSync(index, 'utf8');
   assert.ok(generated.startsWith(note));
   assert.match(generated, /\| 1 \| открыт \| API \| \[Первый пункт\]\(001-first.md\) \| 2026-11-24 \|/);
   assert.equal(report().checks['tech-debt-index'].status, 'pass');
-  run(process.execPath, args);
+  assert.equal(JSON.parse(run(process.execPath, args)).changed, false);
   assert.equal(readFileSync(index, 'utf8'), generated);
   writeFileSync(item, body.replace('открыт', 'закрыт'));
   assert.equal(report().checks['tech-debt-index'].status, 'fail');
   assert.equal(readFileSync(index, 'utf8'), generated);
-  run(process.execPath, args);
+  assert.equal(JSON.parse(run(process.execPath, [join(bin, 'doctor.mjs'), 'tech-debt-index'])).changed, true);
   assert.equal(report().checks['tech-debt-index'].status, 'pass');
   writeFileSync(item, body.replace('открыт', 'ошибка'));
   assert.match(JSON.stringify(report().checks['tech-debt-index'].evidence), /001-first\.md/);

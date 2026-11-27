@@ -5,7 +5,7 @@
 ## Состав пакета
 
 - [`plugins/beerpowers/`](plugins/beerpowers/) — всё, что устанавливается в профиль Codex. [Манифест](plugins/beerpowers/.codex-plugin/plugin.json) хранит версию поставки и SHA исходного BeerPowers.
-- [`skills/`](plugins/beerpowers/skills/) содержит девять навыков с самостоятельными условиями запуска и адаптер явных вызовов `$beerpowers <команда>`. [`commands/`](plugins/beerpowers/commands/) содержит инструкции 15 публичных команд. Вспомогательные процессы остаются внутренними.
+- [`skills/`](plugins/beerpowers/skills/) содержит девять навыков с самостоятельными условиями запуска и адаптер явных вызовов `$beerpowers <команда>`. [`commands/`](plugins/beerpowers/commands/) содержит инструкции 16 публичных команд. Вспомогательные процессы остаются внутренними.
 - [`bin/`](plugins/beerpowers/bin/) и [`hooks/`](plugins/beerpowers/hooks/) работают из установленного пакета. Рабочий каталог обработчика — внешний Git-workspace.
 - [`templates/`](plugins/beerpowers/templates/) содержит ресурсы setup и update. Редактируйте их в пакете. Проектные инструкции и ручные правки учитывайте по правилам миграции. [Доставка инструкций](plugins/beerpowers/reference/instructions.md) · [Миграции](plugins/beerpowers/reference/migrations.md)
 

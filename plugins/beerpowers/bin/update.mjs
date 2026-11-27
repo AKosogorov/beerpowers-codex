@@ -23,7 +23,13 @@ const rules = [
   ['.codex/team-lead.md', 'team-lead', 'codex-lead'],
   ['memory/MEMORY.md', 'memory-index', 'codex-memory'],
 ];
-const originalEntry = '18d8e222f7982cae3aab4545c356415fe200d05fcb6dcafe7dbbd605a4626307';
+// Accept only exact published engine blocks when no previous package is available.
+const publishedBlocks = {
+  'codex-team': '40baef3528485aa5e825f2ca020bb0f7b12f18c5ef3026c12227e59ca0d3d35b',
+  'codex-lead': '451aed984556a4374844fb36ad00407a08bbe86ea606a583501c80610d58bf09',
+  'codex-memory': 'ae32770c5daec0a7978a84c5812945ad23b8a666bda116d30825436c9867664e',
+  entry: '18d8e222f7982cae3aab4545c356415fe200d05fcb6dcafe7dbbd605a4626307',
+};
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const normalize = text => text.replaceAll('\r\n', '\n');
 const validVersion = value => typeof value === 'string' && /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/.test(value);
@@ -126,11 +132,19 @@ function migrateText(text, path, file, name, from, to, previous) {
     actions.push('add ' + name);
   } else if (normalize(current.text) !== canonical) {
     const prior = template(previous, file, name);
-    if (normalize(current.text) !== prior && !(name === 'entry' && sha(normalize(current.text)) === originalEntry)) {
+    if (normalize(current.text) !== prior && sha(normalize(current.text)) !== publishedBlocks[name]) {
       throw Error('Conflict ' + path + ' [' + name + ']\nWorkspace:\n' + current.text + '\nPackage:\n' + canonical);
     }
     after = after.slice(0, current.start) + addition + after.slice(current.end);
     actions.push('replace ' + name);
+  }
+  if (name === 'codex-memory' && current) {
+    const oldJournal = /^(- \[Журнал уроков\]\(retro-log\.md\) — приёмы, которые стоит повторять; раздел «Прецеденты правил» — даты и задачи, на которых написаны правила charter и )\x60team-lead\.md\x60(?=\r?$)/m;
+    const revised = after.replace(oldJournal, '$1\x60.codex/team-lead.md\x60');
+    if (revised !== after) {
+      after = revised;
+      actions.push('fix generated retro index path');
+    }
   }
   const beforeStamp = after;
   if (name === 'codex-team') {

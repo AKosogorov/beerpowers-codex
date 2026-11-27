@@ -87,9 +87,12 @@ sub rule_root_valid {
 
 sub project_rules_valid {
     my ($config) = @_;
-    return 0 unless ref($config) eq 'HASH' && ref($config->{stacks}) eq 'ARRAY' && ref($config->{rules}) eq 'HASH';
+    return 0 unless ref($config) eq 'HASH' && ref($config->{rules}) eq 'HASH';
     my %valid = map { $_ => 1 } @stacks;
-    for (@{$config->{stacks}}) { return 0 unless defined && !ref && delete $valid{$_} }
+    if (exists $config->{stacks}) {
+        return 0 unless ref($config->{stacks}) eq 'ARRAY';
+        for (@{$config->{stacks}}) { return 0 unless defined && !ref && delete $valid{$_} }
+    }
     if (exists $config->{team}) {
         return 0 unless ref($config->{team}) eq 'ARRAY' && @{$config->{team}};
         my %roles = map { $_ => 1 } @role_names;
@@ -121,6 +124,8 @@ sub stage_six_setup {
     for my $role (keys %$role_slots) {
         die "Unknown role or invalid slots: $role\n" unless $known_roles{$role} && ref($role_slots->{$role}) eq 'HASH';
     }
+    my $memory_template = read_file("$package/templates/role-memory/MEMORY.md");
+    my $old_memory_template = '730b34876ac4cbcbc3cc5de1fb33b4941aeb599988a5422cb098d90692896a28';
     for my $role (grep { $_ ne 'implementer' } @role_names) {
         my $file = agent_path($role);
         my $template = read_file("$package/templates/roles/" . agent_filename($role));
@@ -151,7 +156,15 @@ sub stage_six_setup {
                 $old =~ /Следуй назначенному режиму DESIGN, REVIEW или CONSULT из руководства роли/;
         }
         seed($file, $template);
-        seed(".codex/agent-memory/$role/MEMORY.md", read_file("$package/templates/role-memory/MEMORY.md"));
+        my $index = safe_path(".codex/agent-memory/$role/MEMORY.md");
+        if (!$doctor && -f $index) {
+            my $before = read_file($index);
+            if (sha256_hex($before =~ s/\r\n/\n/gr) eq $old_memory_template) {
+                my $newline = $before =~ /\r\n/ ? "\r\n" : "\n";
+                replace_setup_file($index, $memory_template =~ s/\r?\n/$newline/gr);
+            }
+        }
+        seed($index, $memory_template);
     }
     my @configs = (['.codex/role-settings.json', $product]);
     push @configs, map { [".codex/role-settings/$_.json", "projects/$_"] } @$products if @$products > 1;
@@ -159,12 +172,12 @@ sub stage_six_setup {
         parse_json($ENV{BEERPOWERS_ROLE_SKILLS_JSON}) : {};
     my $available = length($ENV{BEERPOWERS_SESSION_SKILLS_JSON} // '') ?
         parse_json($ENV{BEERPOWERS_SESSION_SKILLS_JSON}) : undef;
-    die "Expected role skill assignments by product and a session inventory array\n"
+    die "Expected role skill assignments by project and a session inventory array\n"
         unless ref($assignments) eq 'HASH' && (!defined($available) || ref($available) eq 'ARRAY');
     my %available = map { $_ => 1 } @{$available // []};
     my $rules = !$doctor && !$machine_plan && length($ENV{BEERPOWERS_PATH_RULES_JSON} // '') ?
         parse_json($ENV{BEERPOWERS_PATH_RULES_JSON}) : {};
-    die "Expected path rules keyed by product\n" unless ref($rules) eq 'HASH';
+    die "Expected path rules keyed by project\n" unless ref($rules) eq 'HASH';
     my %products = map { $_ => 1 } @$products;
     my $report_input = $interactive_plan ? ($ENV{BEERPOWERS_SETUP_DEPENDENCIES_JSON} // '') : '';
     my $report = length($report_input) ? parse_json($report_input) : [];
@@ -175,13 +188,13 @@ sub stage_six_setup {
             unless ref($row) eq 'HASH' && !grep {
                 !defined($row->{$_}) || ref($row->{$_}) || $row->{$_} !~ /\S/ || $row->{$_} =~ /[\r\n\x00|]/
             } (qw(product role dependency reason), exists($row->{connection}) ? 'connection' : ());
-        die "Unknown product or role for external dependency\n"
+        die "Unknown project or role for external dependency\n"
             unless $products{$row->{product}} && grep { $_ eq $row->{role} } ('team-lead', @role_names);
         $reported{join("\0", @{$row}{qw(product role dependency)})} = 1;
     }
     my %new_files;
     for my $name (sort keys %$rules) {
-        die "Expected path rules for a known product: $name\n" unless $products{$name} && ref($rules->{$name}) eq 'HASH';
+        die "Expected path rules for a known project: $name\n" unless $products{$name} && ref($rules->{$name}) eq 'HASH';
         for my $id (sort keys %{$rules->{$name}}) {
             my $rule = $rules->{$name}{$id};
             die "Expected name, paths and Markdown text for $name/$id\n"
@@ -190,12 +203,12 @@ sub stage_six_setup {
                 defined($rule->{text}) && !ref($rule->{text}) && $rule->{text} =~ /\S/ && $rule->{text} !~ /\x00/;
             my %seen;
             for my $path (@{$rule->{paths}}) {
-                die "Invalid or duplicate product path for $name/$id\n"
+                die "Invalid or duplicate project path for $name/$id\n"
                     unless rule_root_valid($path) && $path ne '.' && !$seen{$path}++;
                 my $relative = encode('UTF-8', $path);
                 my $target = safe_path("projects/$name/$relative");
                 my @tracked = split /\0/, git_output('-C', "projects/$name", '--literal-pathspecs', 'ls-files', '-z', '--', $relative);
-                die "Rule path has no tracked files: $name/$path\n"
+                die "Project rule path has no tracked files: $name/$path\n"
                     unless (-f $target || -d $target) && grep { $_ eq $relative || index($_, "$relative/") == 0 } @tracked;
             }
             my $file = safe_path(".codex/rules/$id.md");
@@ -214,6 +227,9 @@ sub stage_six_setup {
         my $skills = $assignments->{$name};
         safe_path($cfg);
         my ($defaults, $legacy_paths) = discover_project_rules($scope, $default_track, $size);
+        print "Detected stacks ($scope): ", join(', ', @{$defaults->{stacks}}), "\n"
+            if $interactive_plan && (@$products == 1 || $cfg ne '.codex/role-settings.json');
+        delete $defaults->{stacks};
         my $existing = -f $cfg;
         my $initial = $existing ? read_file($cfg) :
             defined($legacy_repo) && $cfg eq ".codex/role-settings/$legacy_repo.json" && -f '.codex/role-settings.json'
@@ -269,7 +285,7 @@ sub stage_six_setup {
         elsif ($before ne $after) { replace_setup_file($cfg, $after) }
     }
     if (length($report_input) || @$report) {
-        print "Продукт и роль | Зависимость | Причина отсутствия | Способ подключения\n";
+        print "Проект и роль | Зависимость | Причина отсутствия | Способ подключения\n";
         for my $row (@$report) {
             print encode('UTF-8', "$row->{product}/$row->{role} | $row->{dependency} | $row->{reason} | "),
                 (exists $row->{connection} ? encode('UTF-8', $row->{connection}) : 'Способ подключения не подтверждён'), "\n";
@@ -288,20 +304,23 @@ sub stage_six_setup {
         }
         return ref($flags) eq 'HASH' && !grep { !exists $defaults{$_} || !JSON::PP::is_bool($flags->{$_}) } keys %$flags;
     });
-    my $reminders = '';
+    my ($reminders, $previous_by_repo) = ('', {});
     for my $repo (@$products) {
-        my $guide = "memory/commands/$repo.md";
+        my $guide = $test_inputs->{$repo}{guide} // "memory/commands/$repo.md";
         my $command = $test_inputs->{$repo}{command};
         my ($defaults) = discover_project_rules("projects/$repo", $track || 'dev', $size);
         my %stack = map { $_ => 1 } @{$defaults->{stacks}};
+        my $msg = defined($command) ? "Проверка проекта: $command" : "Проверь применимые гейты из $guide.";
+        $reminders .= "*/projects/$repo/*|*/worktrees/*/$repo/* $msg\n";
         for my $scope ("*/projects/$repo/", "*/worktrees/*/$repo/") {
             if (defined $command) {
-                $reminders .= "$scope*.vue|$scope*.ts Проверь компоненты и типы: $command\n" if $stack{nuxt};
-                $reminders .= "$scope*database/migrations/*.php Проверь повторный запуск миграции: $command\n" if $stack{laravel};
-                $reminders .= "$scope*.php Проверь PHP: $command\n" if $stack{laravel};
-                $reminders .= "$scope*.sql Проверь миграцию базы: $command\n" if $stack{postgres};
+                $previous_by_repo->{$repo} .= "$scope*.vue|$scope*.ts Проверь компоненты и типы: $command\n" if $stack{nuxt};
+                $previous_by_repo->{$repo} .= "$scope*database/migrations/*.php Проверь повторный запуск миграции: $command\n" if $stack{laravel};
+                $previous_by_repo->{$repo} .= "$scope*.php Проверь PHP: $command\n" if $stack{laravel};
+                $previous_by_repo->{$repo} .= "$scope*.sql Проверь миграцию базы: $command\n" if $stack{postgres};
             }
-            $reminders .= "$scope* " . (defined $command ? "Проверка продукта: $command" : "Проверь применимые гейты из $guide.") . "\n";
+            $previous_by_repo->{$repo} .= "$scope* " . (defined $command ? "Проверка продукта: $command" :
+                "Проверь применимые гейты из $guide.") . "\n";
         }
     }
     seed('.codex/quality-gates.txt', $reminders,
@@ -315,7 +334,8 @@ sub stage_six_setup {
                 my $msg = "Проверь применимые гейты из memory/commands/$_.md.";
                 "*/projects/$_/* $msg\n*/worktrees/*/$_/* $msg\n"
             } @$set);
-            if ($existing =~ s/\r\n/\n/gr eq $previous && $previous ne $reminders) {
+            my $old = join('', @{$previous_by_repo}{@$set});
+            if (grep { $existing =~ s/\r\n/\n/gr eq $_ && $_ ne $reminders } ($previous, $old)) {
                 replace_setup_file('.codex/quality-gates.txt', $reminders);
                 return;
             }
@@ -335,12 +355,12 @@ sub agent_filename { return ($_[0] eq 'tester' ? 'testing' : $_[0]) . '-agent.md
 sub agent_path { return '.codex/agents/' . agent_filename($_[0]) }
 
 sub role_packet {
-    my ($package, $repo, $role, @paths) = @_;
+    my ($package, $repo, $guide, $role, @paths) = @_;
     die "Unknown role: use team-lead or one of @role_names\n" unless defined($role) && exists $role_skills{$role};
     for (@paths) {
-        die "Expected a product-relative path: $_\n" if !length || m{\A/|/\z|//|(?:\A|/)\.{1,2}(?:/|\z)|[\\:\x00-\x1f]};
+        die "Expected a project-relative path: $_\n" if !length || m{\A/|/\z|//|(?:\A|/)\.{1,2}(?:/|\z)|[\\:\x00-\x1f]};
     }
-    my @files = ('.codex/team-charter.md', 'memory/MEMORY.md', "memory/commands/$repo.md");
+    my @files = ('.codex/team-charter.md', 'memory/MEMORY.md', $guide);
     push @files, 'memory/project/domain-invariants.md'
         if $role ne 'explorer' && -f safe_path('memory/project/domain-invariants.md');
     if ($role eq 'team-lead') { push @files, '.codex/team-lead.md' }
