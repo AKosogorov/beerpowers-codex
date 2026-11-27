@@ -305,13 +305,20 @@ sub stage_six_setup {
         return ref($flags) eq 'HASH' && !grep { !exists $defaults{$_} || !JSON::PP::is_bool($flags->{$_}) } keys %$flags;
     });
     my ($reminders, $previous_by_repo) = ('', {});
+    my %retargeted;
     for my $repo (@$products) {
         my $guide = $test_inputs->{$repo}{guide} // "memory/commands/$repo.md";
         my $command = $test_inputs->{$repo}{command};
         my ($defaults) = discover_project_rules("projects/$repo", $track || 'dev', $size);
         my %stack = map { $_ => 1 } @{$defaults->{stacks}};
         my $msg = defined($command) ? "Проверка проекта: $command" : "Проверь применимые гейты из $guide.";
-        $reminders .= "*/projects/$repo/*|*/worktrees/*/$repo/* $msg\n";
+        my $mask = "*/projects/$repo/*|*/worktrees/*/$repo/*";
+        $reminders .= "$mask $msg\n";
+        my $previous_command = $test_inputs->{$repo}{previous_command};
+        if (defined($previous_command) && defined($command) && $previous_command ne $command) {
+            $retargeted{"$mask Проверка проекта: $previous_command"} = "$mask $msg";
+        }
+        $command = $previous_command // $command;
         for my $scope ("*/projects/$repo/", "*/worktrees/*/$repo/") {
             if (defined $command) {
                 $previous_by_repo->{$repo} .= "$scope*.vue|$scope*.ts Проверь компоненты и типы: $command\n" if $stack{nuxt};
@@ -326,7 +333,8 @@ sub stage_six_setup {
     seed('.codex/quality-gates.txt', $reminders,
         sub { 1 });  # An empty file intentionally disables the reminder.
     if (-f '.codex/quality-gates.txt') {
-        my $existing = read_file('.codex/quality-gates.txt');
+        my $original = read_file('.codex/quality-gates.txt');
+        my $existing = $original =~ s{^([^\r\n]+)(?=\r?$)}{$retargeted{$1} // $1}gmer;
         my @prior_sets = ($products);
         push @prior_sets, [$legacy_repo] if defined $legacy_repo;
         for my $set (@prior_sets) {
@@ -340,13 +348,21 @@ sub stage_six_setup {
                 return;
             }
         }
-        return unless @$products > 1 && defined $legacy_repo;
-        # Only extend the generated first-product defaults. Preserve custom ordering and empty files.
-        my @rules = split /\r?\n/, $reminders;
-        my @old = grep { m{/(?:\*/)?\Q$legacy_repo\E/} } @rules;
-        if ($existing =~ s/\r\n/\n/gr eq join('', map { "$_\n" } @old)) {
-            my @additional = grep { !m{/(?:\*/)?\Q$legacy_repo\E/} } @rules;
-            append_lines('.codex/quality-gates.txt', join('', map { "$_\n" } @additional)) if @additional;
+        my $addition = '';
+        if (@$products > 1 && defined $legacy_repo) {
+            # Only extend the generated first-project defaults.
+            my @rules = split /\r?\n/, $reminders;
+            my @old = grep { m{/(?:\*/)?\Q$legacy_repo\E/} } @rules;
+            if ($existing =~ s/\r\n/\n/gr eq join('', map { "$_\n" } @old)) {
+                my @additional = grep { !m{/(?:\*/)?\Q$legacy_repo\E/} } @rules;
+                $addition = join('', map { "$_\n" } @additional);
+            }
+        }
+        if ($existing ne $original) {
+            $addition =~ s/\n/\r\n/g if $original =~ /\r\n/;
+            replace_setup_file('.codex/quality-gates.txt', $existing . $addition);
+        } elsif (length $addition) {
+            append_lines('.codex/quality-gates.txt', $addition);
         }
     }
 }

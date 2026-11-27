@@ -295,6 +295,11 @@ for my $name (@repos) {
         die "$guide: Test source missing in $product: $src\n" unless source_exists($product, $src);
     }
     @{$test_inputs{$name}}{qw(command source guide)} = ($cmd, $src, $guide);
+    if (my $change = $changed_guides{$name}) {
+        # Only a readable former guide identifies the previous generated reminder.
+        my ($previous) = eval { validate_test_guide(read_file(safe_path($change->[0])), $product) };
+        $test_inputs{$name}{previous_command} = $previous if defined $previous;
+    }
     print "Tests (cwd $product): $cmd\nSource: $src\n" unless $doctor;
 }
 
