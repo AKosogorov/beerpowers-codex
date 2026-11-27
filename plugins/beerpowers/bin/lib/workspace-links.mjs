@@ -42,25 +42,28 @@ export function workspaceLinks(root) {
     const body = readFileSync(workspacePath(root, source), 'utf8');
     const base = posix.dirname(source);
     const prose = documentBody(body);
-    const destinations = source.startsWith('memory/tasks/') ? []
-      : localDestinations(body).map(reference => ({reference, base}));
+    const task = source.startsWith('memory/tasks/');
+    const destinations = localDestinations(body).map(reference => ({reference, base, codexOnly:task}));
     for (const [, reference] of prose.matchAll(/(?<!\x60)\x60([^\x60\r\n]+)\x60(?!\x60)/g)) {
       if (codexBasenames.has(reference)) destinations.push({reference, base});
     }
     for (const [, reference] of prose.matchAll(/`((?:memory|\.codex)\/[\p{L}\p{N}_./-]+\.(?:md|mjs|pl|json|html))`/gu)) {
-      if (source.startsWith('memory/tasks/') && !reference.startsWith('.codex/')) continue;
+      if (task && !reference.startsWith('.codex/')) continue;
       if (/NNN|\.local\.json$|-settings\.json$/.test(reference) || createdLater.has(reference)) continue;
       destinations.push({reference, base:'.'});
     }
-    for (const {reference, base} of destinations) {
-      localLinks++;
+    for (const {reference, base, codexOnly} of destinations) {
+      let included = !codexOnly;
       try {
         const decoded = decodeURIComponent(reference).replace(/\\([()])/g, '$1');
         const target = posix.normalize(posix.join(base, decoded)).replace(/\/$/, '');
+        included ||= target === '.codex' || target.startsWith('.codex/');
+        if (!included) continue;
+        localLinks++;
         if (posix.isAbsolute(decoded) || target === '..' || target.startsWith('../')) throw Error('outside workspace');
         if (target !== '.' && !lstatSync(workspacePath(root, target), {throwIfNoEntry: false})) throw Error('missing path');
       } catch {
-        broken.push({source, reference});
+        if (included) broken.push({source, reference});
       }
     }
   }

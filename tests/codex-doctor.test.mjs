@@ -264,14 +264,25 @@ test('doctor flags appended brief and memory instructions and Claude masks in th
 test('doctor detects shadowed quality gates while preserving distinct fallbacks', t => {
   const {root, report} = workspace(t);
   const file = join(root, '.codex/quality-gates.txt');
-  const specific = '*/projects/app/*.vue|*/worktrees/*/app/*.vue Линт по файлу\n';
+  const specific = '*/projects/app/src/*.ts|*/worktrees/*/app/src/*.ts Линт по файлу\n';
   const fallback = '*/projects/app/*|*/worktrees/*/app/* Сборка по проекту\n';
   writeFileSync(file, fallback + specific);
   const {checks} = report();
   assert.equal(checks['quality-gates'].status, 'fail');
-  assert.match(checks['quality-gates'].evidence.join('\n'), /скрыта общим правилом/);
+  assert.equal(checks['quality-gates'].evidence.filter(line => line.includes('скрыта общим правилом')).length, 2);
   writeFileSync(file, specific + fallback);
   assert.equal(report().checks['quality-gates'].status, 'pass');
+});
+
+test('doctor resolves Markdown links from task artefacts into Codex settings', t => {
+  const {root, report} = workspace(t);
+  const file = 'memory/tasks/DEMO/preflight.md';
+  mkdirSync(join(root, 'memory/tasks/DEMO'), {recursive:true});
+  writeFileSync(join(root, file), '[правило](../../../.codex/missing.json)\n' +
+    '[рабочая настройка](../../../.codex/workspace.json)\n[старое вложение](missing.jpg)\n');
+  const {checks} = report();
+  assert.equal(checks['memory-links'].status, 'fail');
+  assert.deepEqual(checks['memory-links'].evidence.broken, [{source:file, reference:'../../../.codex/missing.json'}]);
 });
 
 test('doctor checks local links across project memory and Codex docs without following junctions', t => {
@@ -322,7 +333,7 @@ test('doctor checks manual and generated debt indexes, with explicit refresh pre
   writeFileSync(item, body.replace('открыт', 'закрыт'));
   assert.equal(report().checks['tech-debt-index'].status, 'fail');
   assert.equal(readFileSync(index, 'utf8'), generated);
-  assert.equal(JSON.parse(run(process.execPath, [join(bin, 'doctor.mjs'), 'tech-debt-index'])).changed, true);
+  assert.equal(JSON.parse(run(process.execPath, args)).changed, true);
   assert.equal(report().checks['tech-debt-index'].status, 'pass');
   writeFileSync(item, body.replace('открыт', 'ошибка'));
   assert.match(JSON.stringify(report().checks['tech-debt-index'].evidence), /001-first\.md/);

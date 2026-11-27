@@ -124,25 +124,35 @@ sub command_guide {
     my @notes = sort grep { /\A[A-Za-z0-9_][A-Za-z0-9_.-]*\.md\z/ && lc($_) ne 'readme.md' &&
         !-l "$dir/$_" && -f "$dir/$_" } readdir $entries;
     closedir $entries;
+    my $checkout = qr{(?:\./)?projects/\Q$name\E/?};
     my @matching = grep {
         my $body = markdown_prose(read_file(safe_path("$dir/$_")));
         $body =~ s/<!--.*?(?:-->|\z)//gs;
         $body =~ /^Каталог запуска: \x60projects\/\Q$name\E\/\x60\r?$/m ||
-            grep { /(?<!\x60)\x60\s*npm[ \t]+--prefix[ \t]+(?:\.\/)?projects\/\Q$name\E\/?[ \t]+run[ \t]/ }
+            grep { /(?<!\x60)\x60[ \t]*(?:npm[ \t]+--prefix[ \t]+$checkout(?:[ \t]+run)|make[ \t]+-C[ \t]+$checkout)[ \t]/ }
                 gate_sections($body)
     } @notes;
     die "$dir: multiple command guides for $name: @matching\n" if @matching > 1;
     return @matching ? "$dir/$matching[0]" : $default;
 }
 
-sub legacy_npm_gate {
+sub legacy_gate {
     my ($prose, $product) = @_;
     my @sections = gate_sections($prose);
-    my @gates = grep { /\A[ \t]*npm(?:[ \t]|\z)/ }
+    my @gates = grep { /\A[ \t]*(?:npm|make)(?:[ \t]|\z)/ }
         ($sections[0] // '') =~ /(?<!\x60)\x60([^\x60\n]+)\x60(?!\x60)/g;
-    die "ambiguous npm gate in section Гейты\n" if @sections > 1 ||
+    my $make = @gates && $gates[0] =~ /^\s*make\b/;
+    my $tool = $make ? 'Make' : 'npm';
+    die "ambiguous $tool gate in section Гейты\n" if @sections > 1 ||
         (@gates && 1 < grep { $_ eq $gates[0] } @gates);
-    die "missing inline npm gate in section Гейты\n" unless @gates;
+    die "missing inline npm gate or Make gate in section Гейты\n" unless @gates;
+
+    if ($make) {
+        my ($goals) = trim_cell($gates[0]) =~
+            m{\Amake[ \t]+-C[ \t]+(?:\./)?\Q$product\E/?((?:[ \t]+[A-Za-z0-9_][A-Za-z0-9_.-]*)+)\z};
+        die "unsupported Make gate; expected make -C $product <goal>\n" unless defined $goals;
+        return (join(' ', 'make', split(' ', $goals)), 'Makefile');
+    }
 
     # Разбираем только литералы и известную обёртку логирования.
     my $word = qr{[-A-Za-z0-9_./:=+,@%]+};
@@ -161,7 +171,7 @@ sub legacy_npm_gate {
         last if $arg eq '--';
         die "unsupported npm gate option $arg before --\n" if $arg =~ /^-/;
     }
-    return (join(' ', 'npm', 'run', $script, @args), $script);
+    return (join(' ', 'npm', 'run', $script, @args), 'package.json', $script);
 }
 
 sub validate_test_guide {
@@ -179,8 +189,7 @@ sub validate_test_guide {
             unless defined($saved) && $saved =~ /\S/ && $saved !~ /[\r\n\x00]/;
         die "missing source in Codex command note\n" unless defined $evidence;
     } else {
-        ($saved, $script) = legacy_npm_gate($prose, $product);
-        $evidence = 'package.json';
+        ($saved, $evidence, $script) = legacy_gate($prose, $product);
         $command = trim_cell($command) =~ s/[ \t]+/ /gr if defined $command;
     }
     die "source differs from setup input; expected $evidence, got $source\n" if defined($source) && $source ne $evidence;
@@ -207,6 +216,12 @@ for my $key (qw(standArchive removeSourceBranch)) {
     die "$git_file: $key must be boolean\n" if exists($git_settings->{$key}) && !JSON::PP::is_bool($git_settings->{$key});
 }
 my %existing_profiles = %{$git_settings->{repos}};
+my $workspace_file = safe_path('.codex/workspace.json');
+my $saved_workspace = -f $workspace_file ? parse_json(read_file($workspace_file)) : undef;
+my $saved_guides = ref($saved_workspace) eq 'HASH' && exists($saved_workspace->{commandGuides})
+    ? $saved_workspace->{commandGuides} : {};
+die "$workspace_file: commandGuides must be an object\n" unless ref($saved_guides) eq 'HASH';
+my %command_guides = %$saved_guides;
 my %test_inputs;
 my $checks_json = $doctor ? '' : ($ENV{BEERPOWERS_TESTS_JSON} // '');
 my $read_saved_checks = $doctor || ($machine_plan && !length($checks_json));
@@ -231,7 +246,16 @@ for my $name (@repos) {
     if ($doctor && !exists $existing_profiles{$name}) { push @errors, "$git_file: missing profile for $name" }
     $git_settings->{repos}{$name} = $profile;
     print "Project: $product\nProfile: $profile\n";
-    my $guide = command_guide($name);
+    my $explicit = exists($params->{guide}) || exists($command_guides{$name});
+    my $guide = exists($params->{guide}) ? $params->{guide}
+        : $explicit ? $command_guides{$name} : command_guide($name);
+    if ($explicit) {
+        die "Invalid guide for $name; expected memory/commands/<name>.md\n"
+            unless defined($guide) && !ref($guide) && $guide =~ m{\Amemory/commands/[A-Za-z0-9_][A-Za-z0-9_.-]*\.md\z} &&
+                lc(basename($guide)) ne 'readme.md';
+        die "$guide: expected an existing command guide\n" unless -f safe_path($guide);
+        $command_guides{$name} = $guide;
+    }
     my ($cmd, $src) = @{$params}{qw(command source)};
     if (!$read_saved_checks) {
         die "Expected non-empty test command for $name\n" unless defined($cmd) && !ref($cmd) && $cmd =~ /\S/ && $cmd !~ /[\r\n\x00]/;
@@ -272,7 +296,6 @@ sub seed {
     }
 }
 
-my $workspace_file = safe_path('.codex/workspace.json');
 my $current_setup = !-e $workspace_file ||
     eval { (parse_json(read_file($workspace_file))->{beerpowers} // '') eq $version };
 my $track = !$doctor && !$machine_plan ? ($ENV{BEERPOWERS_TRACK} // '') : '';
@@ -325,7 +348,6 @@ sub markdown_prose {
     return join("\n", @lines);
 }
 
-my $saved_workspace = -f $workspace_file ? parse_json(read_file($workspace_file)) : undef;
 my $project_input = !$doctor && !$machine_plan ? $ENV{BEERPOWERS_PROJECT_NAME} : undef;
 my $saved_label = ref($saved_workspace) eq 'HASH' ? $saved_workspace->{projectName} : undef;
 my $project_name = defined($project_input) ? decode('UTF-8', $project_input, FB_CROAK | LEAVE_SRC) : $saved_label //
@@ -474,6 +496,11 @@ for my $name (qw(team-charter team-lead)) {
 }
 my %workspace_defaults = (schemaVersion => 1, beerpowers => $version, projectName => $project_name);
 my $workspace_changed = 0;
+$workspace_defaults{commandGuides} = \%command_guides if %command_guides;
+if (ref($saved_workspace) eq 'HASH' && $json->encode($saved_guides) ne $json->encode(\%command_guides)) {
+    $saved_workspace->{commandGuides} = \%command_guides;
+    $workspace_changed = 1;
+}
 if (defined($project_input) && ref($saved_workspace) eq 'HASH' && !defined($saved_label)) {
     $saved_workspace->{projectName} = $project_name;
     $workspace_changed = 1;
