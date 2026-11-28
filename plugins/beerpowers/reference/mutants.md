@@ -1,10 +1,10 @@
 # Мутационные пробы в отдельных рабочих деревьях
 
-Тестер проверяет, ловит ли регрессионный тест конкретную ошибку. [mutants.mjs](../bin/mutants.mjs) берёт один слот на одновременно работающую пробу, сохраняет рабочее дерево проекта и протоколирует результат. Используй проверенный код и тесты своего проекта. Рабочий каталог — внешний workspace, [выбор Node](beerpowers:reference/node-runtime.md) общий для обработчиков пакета.
+Тестер проверяет, ловит ли регрессионный тест конкретную ошибку. [mutants.mjs](../bin/mutants.mjs) берёт один слот на одновременно работающую пробу, сохраняет рабочее дерево проекта и протоколирует результат. Используй проверенный код и тесты своего проекта. Рабочий каталог — внешний workspace, [выбор Node](node-runtime.md "beerpowers:reference/node-runtime.md") общий для обработчиков пакета.
 
-В [настройке тестов](beerpowers:reference/parallel-tests.md) дополни запись репозитория. Для примера ниже передай `$env:BEERPOWERS_NODE = $node` в текущем процессе PowerShell.
+В [настройке тестов](parallel-tests.md "beerpowers:reference/parallel-tests.md") дополни запись репозитория. Для примера ниже передай `$env:BEERPOWERS_NODE = $node` в текущем процессе PowerShell.
 
-Таблицу результатов приложи к [мутационному гейту feature](beerpowers:reference/feature-implementation.md).
+Таблицу результатов приложи к [мутационному гейту feature](feature-implementation.md "beerpowers:reference/feature-implementation.md").
 
 ```json
 {

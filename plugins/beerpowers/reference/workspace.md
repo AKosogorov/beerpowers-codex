@@ -7,15 +7,15 @@
 | Путь | Назначение |
 |---|---|
 | `projects/<репо>/` | Основные checkout проектов. Адаптер обнаруживает непосредственные подкаталоги с собственным `.git`. Имя проекта сохраняется в настройках и рабочих деревьях |
-| `worktrees/<код>/<репо>/` | Зарегистрированные checkout задач. См. [рабочие деревья](beerpowers:reference/worktrees.md) |
-| `memory/tasks/<код>/` | Постановка, подтверждения, checkout и отчёты. См. [раскладку артефактов задачи](beerpowers:reference/tasks-layout.md) |
-| `docs/features/<slug>/` | Артефакты [PM-конвейера](beerpowers:reference/feature-pipeline.md) |
+| `worktrees/<код>/<репо>/` | Зарегистрированные checkout задач. См. [рабочие деревья](worktrees.md "beerpowers:reference/worktrees.md") |
+| `memory/tasks/<код>/` | Постановка, подтверждения, checkout и отчёты. См. [раскладку артефактов задачи](tasks-layout.md "beerpowers:reference/tasks-layout.md") |
+| `docs/features/<slug>/` | Артефакты [PM-конвейера](feature-pipeline.md "beerpowers:reference/feature-pipeline.md") |
 
 Внешний Git версионирует память, конфигурацию и документы фичи. Setup добавляет `projects/` и `worktrees/` в его ignore. Общие пути в конфигурации задаются относительно корня workspace, с прямым слэшем. Личные настройки интеграций и медиа задачи остаются под gitignore.
 
 ## Настройки
 
-`.codex/workspace.json` хранит `schemaVersion: 1` и `beerpowers` с версией установки. Диагностика требует корректной версии и распознаёт исходный формат 0.2.0. Настройки UI читают [CDP и layout](beerpowers:reference/integrations.md), настройки тестов — [параллельный запуск](beerpowers:reference/parallel-tests.md) и [мутационные пробы](beerpowers:reference/mutants.md).
+`.codex/workspace.json` хранит `schemaVersion: 1` и `beerpowers` с версией установки. Диагностика требует корректной версии и распознаёт исходный формат 0.2.0. Настройки UI читают [CDP и layout](integrations.md "beerpowers:reference/integrations.md"), настройки тестов — [параллельный запуск](parallel-tests.md "beerpowers:reference/parallel-tests.md") и [мутационные пробы](mutants.md "beerpowers:reference/mutants.md").
 
 ```json
 {
@@ -33,18 +33,18 @@
 
 | Файл | Что хранит |
 |---|---|
-| `.codex/git-settings.json` | Профили проектов и общие настройки [маршрута Git](beerpowers:reference/git-flow.md) |
+| `.codex/git-settings.json` | Профили проектов и общие настройки [маршрута Git](git-flow.md "beerpowers:reference/git-flow.md") |
 | `.codex/git-settings.local.json` | Личные параметры публикации |
-| `.codex/barriers.json` | Переключатели хуков и `comments.excludeDirs`. См. [контракт хуков](beerpowers:reference/hooks.md) |
-| `.codex/figma-settings.json`, `.codex/yandex-tracker-settings.json` | Личные настройки [интеграций](beerpowers:reference/integrations.md) |
+| `.codex/barriers.json` | Переключатели хуков и `comments.excludeDirs`. См. [контракт хуков](hooks.md "beerpowers:reference/hooks.md") |
+| `.codex/figma-settings.json`, `.codex/yandex-tracker-settings.json` | Личные настройки [интеграций](integrations.md "beerpowers:reference/integrations.md") |
 
 `comments.excludeDirs` принимает массив путей каталогов от корня workspace, например `["projects/store/generated"]`. При проверке комментариев хук игнорирует этот каталог и все вложенные пути. Для checkout в `worktrees/<код>/<репо>/` используется тот же путь проекта. В конфигурации хранится исключение именно для `guard-comments`.
 
 ## Управляемые блоки и установленный пакет
 
-Управляемые блоки в `AGENTS.md`, `.codex/team-charter.md`, `.codex/team-lead.md` и `memory/MEMORY.md` отмечены маркерами движка. Проектный текст сохраняй за границами блоков. Миграция сверяет старый штамп и содержимое, показывает конфликт ручной правки и сохраняет проектные расширения. [Доставка инструкций](beerpowers:reference/instructions.md) · [Миграции](beerpowers:reference/migrations.md)
+Управляемые блоки в `AGENTS.md`, `.codex/team-charter.md`, `.codex/team-lead.md` и `memory/MEMORY.md` отмечены маркерами движка. Проектный текст сохраняй за границами блоков. Миграция сверяет старый штамп и содержимое, показывает конфликт ручной правки и сохраняет проектные расширения. [Доставка инструкций](instructions.md "beerpowers:reference/instructions.md") · [Миграции](migrations.md "beerpowers:reference/migrations.md")
 
-Хуки, двоичные помощники и reference читаются из выбранного установленного пакета. Используй [проверяемое разрешение пути пакета и рантаймов](beerpowers:reference/command-runtime.md) вместо копирования помощников в проект. Свои setup и teardown проект хранит в `.codex/bin/`. Формы, аргументы и повторный вход описаны в [рабочих деревьях](beerpowers:reference/worktrees.md).
+Хуки, двоичные помощники и reference читаются из выбранного установленного пакета. Используй [проверяемое разрешение пути пакета и рантаймов](command-runtime.md "beerpowers:reference/command-runtime.md") вместо копирования помощников в проект. Свои setup и teardown проект хранит в `.codex/bin/`. Формы, аргументы и повторный вход описаны в [рабочих деревьях](worktrees.md "beerpowers:reference/worktrees.md").
 
 ## Кто читает настройки
 
@@ -52,10 +52,10 @@ Setup записывает подтверждённые размеры окна 
 
 Необязательный объект `commandGuides` в `workspace.json` связывает имя проекта с явно выбранной существующей памяткой под `memory/commands/`. Setup, doctor и `role-packet` используют этот путь. Команда и её источник берутся из самой памятки.
 
-Контракт setup и teardown рабочих деревьев задаёт [правила worktree](beerpowers:reference/worktrees.md). Формы записи, подтверждения и свой адаптер трекера определены в [tracker](../commands/tracker.md). Если после миграции остались ссылки на старые копии, выполни [doctor](../commands/doctor.md).
+Контракт setup и teardown рабочих деревьев задаёт [правила worktree](worktrees.md "beerpowers:reference/worktrees.md"). Формы записи, подтверждения и свой адаптер трекера определены в [tracker](../commands/tracker.md). Если после миграции остались ссылки на старые копии, выполни [doctor](../commands/doctor.md).
 
 ## Кеш и диагностика
 
 `.codex/.cache/` игнорируется внешним Git. [workspace-clean](../commands/worktrees-clear.md#уборка-по-указанной-области) убирает свободные копии мутантов, старые завершённые прогоны тестов и старые отметки скриншотов. Порог по умолчанию семь дней. Длительности тестов, снимки и состояние адаптера трекера, данные открытия задачи и служебное состояние защитных проверок сохраняются. Незнакомые каталоги требуют отдельного разбора.
 
-Запусти [doctor](../commands/doctor.md) или `node <пакет>/bin/workspace-check.mjs` из корня. Список проверок доступен с `--list`. Ошибка формата или раскладки отображается с путём к файлу. [Проверки workspace](beerpowers:reference/doctor-checks.md)
+Запусти [doctor](../commands/doctor.md) или `node <пакет>/bin/workspace-check.mjs` из корня. Список проверок доступен с `--list`. Ошибка формата или раскладки отображается с путём к файлу. [Проверки workspace](doctor-checks.md "beerpowers:reference/doctor-checks.md")

@@ -21,7 +21,7 @@ sub memory_archive {
 }
 
 sub migrate_memory_links {
-    my ($bin, $changes) = @_;
+    my ($bin, $changes, $package_url) = @_;
     return unless -f safe_path('memory/MEMORY.md');
     open my $ref, '-|', 'git', 'rev-parse', '--verify', '-q', 'HEAD' or die "git: $!\n";
     my $head = <$ref> // '';
@@ -65,8 +65,12 @@ sub migrate_memory_links {
             unless ($historical) {
                 my $name = qr{reference/(?:[\w-]+/)*[\w-]+\.md};
                 # Только самостоятельный адрес пакета или явная пометка о поставке.
-                $lines[$i] =~ s{(\x60|\]\()\$packageRoot/($name)(?=[#\x60)])}{
-                    -f "$bin/../$2" ? $1 . 'beerpowers:' . $2 : $&
+                $lines[$i] =~ s{\]\((?:\$packageRoot/|beerpowers:)($name)(\#[^\s)]*)?\)}{
+                    my ($file, $fragment) = ($1, $2 // '');
+                    -f "$bin/../$file" ? qq{]($package_url/$file$fragment "beerpowers:$file$fragment")} : $&
+                }ge;
+                $lines[$i] =~ s{\x60\$packageRoot/($name)(?=[#\x60])}{
+                    -f "$bin/../$1" ? "\x60beerpowers:$1" : $&
                 }ge;
                 $lines[$i] =~ s{(?<![.:/\w-])($name)(?=\x60? установленного пакета)}{
                     -f "$bin/../$1" ? 'beerpowers:' . $1 : $&

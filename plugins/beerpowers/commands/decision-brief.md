@@ -90,7 +90,7 @@
 | `options` | 2–4 объекта со строками `name`, `addresses` (какой вопрос закрывается), `pro`, `con`, `risk` |
 | `recommendation`, `decisions` | Явная рекомендация и непустой массив решений человека |
 
-В PowerShell используй объект со строками данных. Проверенный корень пакета берётся из единого навыка, а `$node` — из [проверки Node](beerpowers:reference/node-runtime.md). В POSIX shell подай тот же JSON через stdin процессу `node "$packageRoot/bin/decision-brief.mjs"`.
+В PowerShell используй объект со строками данных. Проверенный корень пакета берётся из единого навыка, а `$node` — из [проверки Node](../reference/node-runtime.md "beerpowers:reference/node-runtime.md"). В POSIX shell подай тот же JSON через stdin процессу `node "$packageRoot/bin/decision-brief.mjs"`.
 
 ```powershell
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
