@@ -23,7 +23,7 @@ export function referenceFiles() {
 }
 
 export function referenceFile(label, optional = false) {
-  const path = referenceFiles().get(label);
+  const path = referenceFiles().get(label.split('#', 1)[0]);
   if (!path && !optional) throw Error('Справочник отсутствует в установленном пакете: ' + label);
   return path;
 }

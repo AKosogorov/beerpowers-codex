@@ -4,7 +4,7 @@
 
 Для `window` и вызова без режима найди инструмент `get_usage_limits` хоста текущего чата. Если он доступен и период включает текущее время, прочитай лимиты. Передай обработчику только `rateLimitsByLimitId` или, при отсутствии этой карты, `rateLimits`. Из каждого окна скопируй `primary` и `secondary` с полями `usedPercent`, `windowDurationMins` и `resetsAt`. Для одиночного объекта сохрани `limitId`. Добавь `observedAt` с текущим временем UTC. Если нужна сводка по выгрузке за окно или пользователь запросил JSON, передай эти поля временным JSON-файлом через `--limits` и удали его после отчёта. Без выгрузки и сохранения отчёта можно показать доступные проценты и границы прямо по ответу хоста. Для исторического периода используй наблюдения из выгрузки. При отсутствии инструмента укажи, что результат для окна зависит от экспортированных снимков.
 
-Из корня workspace запусти [обработчик token-audit](../bin/token-audit.mjs) из проверенного пакета. Получи `$node` по [правилу выбора Node](../reference/node-runtime.md) через `BEERPOWERS_NODE` или PATH. В PowerShell команда с заданным пользователем файлом выглядит так.
+Из корня workspace запусти [обработчик token-audit](../bin/token-audit.mjs) из проверенного пакета. Получи `$node` по [правилу выбора Node](beerpowers:reference/node-runtime.md) через `BEERPOWERS_NODE` или PATH. В PowerShell команда с заданным пользователем файлом выглядит так.
 
 ```powershell
 & $node (Join-Path $packageRoot 'bin/token-audit.mjs') project --input $metricsFile --project $projectLabel --top 8

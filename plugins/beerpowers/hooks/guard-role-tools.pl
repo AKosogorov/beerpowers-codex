@@ -21,7 +21,7 @@ sub role_reader_tool {
     for (@files) { tr{\\}{/}; return unless m{\A[\pL\pM\pN _.:/()\-]+\z} }
     my $prefix = ($windows ? '& ' : '') . join(' ', map { "'$_'" } @files);
     # Both shells receive literal data. Other options, substitutions and operators are outside this grammar.
-    my $arg = qr/'[\pL\pM\pN _.:\/*?+\-]+'/;
+    my $arg = qr/'[\pL\pM\pN _.:\/*?+#\-]+'/;
     return 'Read' if $cmd =~ /\A\Q$prefix\E Read $arg\z/;
     return $1 if $cmd =~ /\A\Q$prefix\E (Grep|Glob) $arg $arg\z/;
     return;

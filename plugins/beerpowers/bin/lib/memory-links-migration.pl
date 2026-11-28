@@ -27,7 +27,7 @@ sub migrate_memory_links {
     my $head = <$ref> // '';
     return unless close($ref) && $head =~ s/\s+$//;
     my ($sha, $blobs) = memory_archive($head);
-    return unless $sha;
+    $blobs //= {};
     my %pending = map { $_->[0] => $_ } @$changes;
     my (%target, %basename);
     for my $old (sort keys %$blobs) {
@@ -36,7 +36,7 @@ sub migrate_memory_links {
         my $dest = ".codex/$suffix";
         if ($suffix =~ m{^reference/}) {
             next unless -f "$bin/../$suffix";
-            $dest = '$packageRoot/' . $suffix;
+            $dest = 'beerpowers:' . $suffix;
         } else {
             next unless $pending{$dest} || -f safe_path($dest);
         }
@@ -61,6 +61,16 @@ sub migrate_memory_links {
             if ($comment || $line =~ /<!--/) {
                 $comment = $line !~ /-->/;
                 next;
+            }
+            unless ($historical) {
+                my $name = qr{reference/(?:[\w-]+/)*[\w-]+\.md};
+                # Только самостоятельный адрес пакета или явная пометка о поставке.
+                $lines[$i] =~ s{(\x60|\]\()\$packageRoot/($name)(?=[#\x60)])}{
+                    -f "$bin/../$2" ? $1 . 'beerpowers:' . $2 : $&
+                }ge;
+                $lines[$i] =~ s{(?<![.:/\w-])($name)(?=\x60? установленного пакета)}{
+                    -f "$bin/../$1" ? 'beerpowers:' . $1 : $&
+                }ge;
             }
             next unless $line =~ /\x60/;
             $lines[$i] =~ s{(?<!\x60)\x60([.\w/-]+)\x60(?!\x60)}{

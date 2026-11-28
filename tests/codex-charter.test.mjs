@@ -58,6 +58,20 @@ test('setup removes generated aliases from an existing model table and keeps nat
   assert.throws(() => renderCharter({...settings,file,template,overrides:{MODELS:table + '| architect | opus | custom |'}}), /ID модели Codex/);
 });
 
+test('в архивном уставе адрес пакета меняется только у поставляемого справочника', () => {
+  const file = 'team-charter', template = fileText(file);
+  const shipped = '[Git](.claude/reference/git-flow.md#qa-чеклист)';
+  const local = '[Свой](.claude/reference/local.md) и [Git проекта](projects/api/.claude/reference/git-flow.md)';
+  const example = '~~~md\n' + shipped + '\n~~~';
+  const source = '# Team Charter — Архив\n\n## Назначение\n\n' + [shipped, local, example].join('\n\n');
+  const result = renderCharter({...settings,file,template,source});
+  assert.ok(result.includes('[Git](beerpowers:reference/git-flow.md#qa-чеклист)\n\n' + local + '\n\n' + example));
+  const oldPm = 'Условия переходов и handoff — в reference/feature-pipeline.md#артефакты-и-статусы установленного пакета.';
+  const text = result + '\n' + oldPm + '\n\n~~~md\n' + oldPm + '\n~~~\n';
+  const updated = refreshCharter({file,template,text,ui:true});
+  assert.equal(updated, text.replace(oldPm, oldPm.replace('reference/', 'beerpowers:reference/')));
+});
+
 test('update replaces a published block at its location and preserves manual text, fenced marker examples and CRLF',()=>{
   const file='team-lead', template=fileText(file);
   const active=renderCharter({...settings,file,template});

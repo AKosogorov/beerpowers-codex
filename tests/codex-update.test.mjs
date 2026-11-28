@@ -191,10 +191,12 @@ test('update fixes the journal pointer in prose and preserves its fenced example
   ws.apply(ws.plan().planId);
   const index = 'memory/MEMORY.md';
   const canonical = readFileSync(join(packageRoot, 'templates/memory/MEMORY.md'), 'utf8')
-    .match(/<!-- beerpowers:engine codex-memory -->[\s\S]*?<!-- \/beerpowers:engine -->/)[0];
+    .match(/<!-- beerpowers:engine codex-memory -->[\s\S]*?<!-- \/beerpowers:engine -->/)[0].replace(/\r?\n/g, '\r\n');
   const journal = '- [Журнал уроков](retro-log.md) — приёмы, которые стоит повторять; раздел «Прецеденты правил» — даты и задачи, на которых написаны правила charter и `team-lead.md`';
   const example = '~~~markdown\r\n' + journal + '\r\n~~~\r\n';
-  ws.put(index, example + '\r\n' + journal + '\r\n\r\n' + canonical + '\r\n');
+  const previousBlock = canonical.replace('`beerpowers:reference`','`reference/`');
+  assert.notEqual(previousBlock, canonical);
+  ws.put(index, example + '\r\n' + journal + '\r\n\r\n' + previousBlock + '\r\n');
   ws.apply(ws.plan().planId);
   assert.equal(ws.read(index), example + '\r\n' + journal.replace('team-lead.md', '.codex/team-lead.md') + '\r\n\r\n' + canonical + '\r\n');
   assert.deepEqual(ws.plan().changes, []);

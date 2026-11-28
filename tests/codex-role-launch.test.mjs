@@ -129,6 +129,7 @@ test('beerpowers:reference читает доставленные с пакето
   assert.equal(index.status, 0, index.stderr);
   assert.deepEqual(index.stdout.trim().split(/\r?\n/), [label]);
   assert.equal(read(label).stdout, 'Документ поставки\n');
+  assert.equal(read(label + '#проверки').stdout, 'Документ поставки\n');
   assert.equal(read('reference/ui/new-guide.md').stdout, 'Документ проекта');
   for (const name of ['missing.md', 'internal.txt', 'external/MEMORY.md', '../bin/role-files.mjs']) {
     assert.notEqual(read(ns + '/' + name).status, 0, name);
@@ -182,7 +183,7 @@ test('Привязанный ID передаёт YAML tools в зарегист�
   assert.equal(event('functions.exec',id,inner('exec_command',{cmd:grepOnly,login:false})).hookSpecificOutput.permissionDecision,'deny');
   for (const [args, expected] of [
     ["Read 'memory/project/architect.md'", /read:architect/],
-    ["Read 'beerpowers:reference/git-flow.md'", /QA-чеклист/],
+    ["Read 'beerpowers:reference/git-flow.md#qa-чеклист'", /QA-чеклист/],
     ["Grep 'memory/project' 'read:database'", /memory\/project\/database.md:1:read:database/],
     ["Glob 'memory' 'project/*.md'", /memory\/project\/architect.md/],
   ]) {

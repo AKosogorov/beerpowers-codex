@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { blocks, markupLines } from './markdown-engine.mjs';
 import { isClaudeModel } from './role-metadata.mjs';
+import { referenceFiles, referenceNamespace } from './role-references.mjs';
 
 const asset = name => readFileSync(new URL('../../templates/charter/' + name, import.meta.url), 'utf8').replaceAll('\r\n','\n');
 const previous = JSON.parse(asset('previous.json'));
@@ -46,12 +47,27 @@ function anchors(text, file) {
   return result.sort((a,b) => a.start-b.start);
 }
 
+// Вне управляемых блоков заменяется только старая формулировка, которую печатал setup.
+function upgradePmLink(text) {
+  const oldSentence = 'Условия переходов и handoff — в reference/feature-pipeline.md#артефакты-и-статусы установленного пакета.';
+  if (!text.includes(oldSentence)) return text;
+  const current = oldSentence.replace('reference/', referenceNamespace + '/');
+  for (const {end,content} of [...markupLines(text)].reverse()) {
+    if (content.endsWith(oldSentence)) text = text.slice(0,end - oldSentence.length) + current + text.slice(end);
+  }
+  return text;
+}
+
 function adaptProse(text) {
+  const references = text.includes('.claude/reference/') ? referenceFiles() : null;
   const replacements = line => line.replaceAll('/beerpowers:', '$beerpowers ')
     .replace(/beerpowers:(brainstorm|debug-loop|economy|grill|minimal-diff|page-screenshot|prototype|summarizing-mr-links|tracker-task)\b/g,'beerpowers-codex:$1')
     .replaceAll('\x60front\x60','\x60frontend\x60').replaceAll('\x60db\x60','\x60database\x60')
-    .replaceAll('.claude/reference/', 'reference/').replaceAll('.claude/bin/', '<пакет>/bin/')
-    .replaceAll('.claude/', '.codex/');
+    .replace(/(?<![\w./-])\.claude\/reference\/([\w/-]+\.md)(?=[\s\x60#),;]|$)/g, (original, name) => {
+      const label = referenceNamespace + '/' + name;
+      return references.has(label) ? label : original;
+    })
+    .replaceAll('.claude/bin/', '<пакет>/bin/').replace(/\.claude\/(?!reference\/)/g, '.codex/');
   for (const line of [...markupLines(text)].reverse()) {
     text = text.slice(0,line.start) + replacements(line.content) + text.slice(line.end);
   }
@@ -219,7 +235,7 @@ export function renderCharter({file,template,slots,overrides={},source='',roster
     const match = /^\{\{([A-Z_]+)\}\}$/.exec(content);
     if (match) result = result.slice(0,start) + (fields[match[1]] ?? '') + result.slice(end);
   }
-  return preamble + result;
+  return upgradePmLink(preamble + result);
 }
 
 // У существующего документа владелец всего текста за границами маркеров — проект.
@@ -277,7 +293,7 @@ export function refreshCharter({file,text,template,prior,ui,version,rosters={},g
     }
     for (const row of updates.reverse()) text = text.slice(0,row.start) + row.value + text.slice(row.end);
   }
-  return text;
+  return upgradePmLink(text);
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
