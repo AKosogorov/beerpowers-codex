@@ -1,7 +1,7 @@
 ---
 name: architect-agent
 description: "Системный архитектор проекта (роль `architect` в charter), три режима: DESIGN — проектирует фичу до разработки, поток данных через слои {{BACKEND}} и клиент {{FRONTEND_FRAMEWORK}}, пишет ADR, нарезает задачи ролям; REVIEW — архитектурные смеллы в готовом коде; CONSULT — куда положить новую логику. Хранитель доменных инвариантов. Миграции, UI и тесты не трогает."
-model: opus
+model: gpt-6.2-astra
 color: purple
 memory: "project"
 tools: [Read, Grep, Glob, Write, WebSearch, Bash, Skill, SendMessage]

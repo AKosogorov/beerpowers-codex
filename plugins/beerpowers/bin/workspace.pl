@@ -881,12 +881,6 @@ sub replace_setup_file {
     push @changes, [$path, read_file(safe_path($path)), $content, 'replace'];
 }
 
-sub retire_role_settings {
-    my ($path) = @_;
-    die "Unexpected retired configuration: $path\n" unless $path =~ m{\A\.codex/role-settings(?:/[\w.-]+)?\.json\z};
-    push @changes, [$path, read_file(safe_path($path)), '', 'delete'];
-}
-
 require "$Bin/role-packet.pl";
 my @configured = sort keys %existing_profiles;
 my %rosters;
@@ -1136,11 +1130,10 @@ if ($doctor) {
     print "Project OK: $_\n" for @checks;
     exit 0;
 }
-@changes = ((grep { ($_->[3] // '') ne 'delete' } @changes), (grep { ($_->[3] // '') eq 'delete' } @changes));
 if ($machine_plan) {
     my @plan = map {
         my ($path, $before, $content, $replace) = @$_;
-        +{ path => $path, action => ($replace // '') eq 'delete' ? 'DELETE' : $replace ? 'UPDATE' : defined($before) ? 'APPEND' : 'CREATE',
+        +{ path => $path, action => $replace ? 'UPDATE' : defined($before) ? 'APPEND' : 'CREATE',
            content => encode_base64($content, '') };
     } @changes;
     print STDOUT $json->encode({format => 1, changes => \@plan, $copy_private ? (copyPrivateGit => JSON::PP::true) : (),
@@ -1151,7 +1144,7 @@ unless (@changes || $copy_private) { print "No changes.\n"; exit 0 }
 
 for my $change (@changes) {
     my ($path, $before, $addition, $action) = @$change;
-    print (($action // '') eq 'delete' ? "DELETE $path\n" : $action ? "UPDATE $path\n" : defined($before) ? "APPEND $path\n" : "CREATE $path\n");
+    print ($action ? "UPDATE $path\n" : defined($before) ? "APPEND $path\n" : "CREATE $path\n");
     if ($mode eq 'plan') {
         $addition =~ s/^/+ /mg;
         print $addition;
@@ -1162,7 +1155,6 @@ for my $change (@changes) {
         open my $lock, '<', '.git/config' or die ".git/config: $!\n";
         flock $lock, LOCK_EX or die "Workspace busy\n";
         die "$path changed during setup; run plan again\n" unless read_file(safe_path($path)) eq $before;
-        if ($action eq 'delete') { unlink $path or die "$path: $!\n"; next }
         my ($fh, $tmp) = tempfile('beerpowers-settings-XXXXX', DIR => '.git', UNLINK => 1);
         binmode $fh; print {$fh} $addition or die "$tmp: $!\n"; close $fh or die "$tmp: $!\n";
         chmod((stat($path))[2] & 0777, $tmp) or die "$tmp: $!\n";

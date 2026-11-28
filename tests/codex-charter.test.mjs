@@ -42,7 +42,20 @@ test('archived rows retain eligibility across projects, scope-specific reading, 
   const result = renderCharter({...settings,file,template,source});
   assert.match(result,/\| \x60database\x60 \| api, cms \|.*database-agent\.md.*clone\.md.*До миграции проверь экспорт \|/);
   assert.match(result,/\| \x60tester\x60 \| api, cms \|.*testing-agent\.md.*probes\.md/);
-  assert.match(result,/\| \x60tester\x60 \| \x60gpt-6\.2-sol\x60 \| проверка автоматически измеряема\./);
+  assert.match(result,/- \x60tester\x60 — проверка автоматически измеряема\./);
+  assert.doesNotMatch(result, /\b(?:opus|sonnet|haiku)\b/);
+});
+
+test('setup removes generated aliases from an existing model table and keeps native overrides and fenced examples', () => {
+  const file = 'team-charter', template = fileText(file);
+  const alias = '| `opus` | `gpt-6.2-astra` | Соответствие исходного тира роли. Доступность проверяется перед запуском. |';
+  const override = '| architect | custom-codex | ручной выбор |';
+  const table = '| Роль | Модель | Причина |\n|---|---|---|\n';
+  const current = renderCharter({...settings,file,template,overrides:{MODELS:table + override}});
+  const source = current.replace(override, alias + '\n' + override) + '\n~~~md\n' + table + alias + '\n~~~\n';
+  const updated = refreshCharter({file,template,text:source,ui:true});
+  assert.equal(updated, current + '\n~~~md\n' + table + alias + '\n~~~\n');
+  assert.throws(() => renderCharter({...settings,file,template,overrides:{MODELS:table + '| architect | opus | custom |'}}), /ID модели Codex/);
 });
 
 test('update replaces a published block at its location and preserves manual text, fenced marker examples and CRLF',()=>{

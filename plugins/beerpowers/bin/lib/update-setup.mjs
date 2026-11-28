@@ -32,7 +32,6 @@ export function setupAdditions(root, pkg) {
   const changes = plan.changes.map(({action, path, content}) => {
     if (!/^(?:\.codex\/|memory\/|AGENTS\.md$|\.gitignore$)/.test(path)) throw Error('Unexpected setup target: ' + path);
     workspacePath(root, path);
-    if (action === 'DELETE' && /^\.codex\/role-settings(?:\/[\w.-]+)?\.json$/.test(path)) return {path, action, addition:null};
     if (!['CREATE','APPEND','UPDATE'].includes(action)) throw Error('Unexpected setup action: ' + action);
     const addition = new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(Buffer.from(content, 'base64'));
     return {path, action, addition};

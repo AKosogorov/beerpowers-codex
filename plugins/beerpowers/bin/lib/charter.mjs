@@ -3,11 +3,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { blocks, markupLines } from './markdown-engine.mjs';
+import { isClaudeModel } from './role-metadata.mjs';
 
 const asset = name => readFileSync(new URL('../../templates/charter/' + name, import.meta.url), 'utf8').replaceAll('\r\n','\n');
 const previous = JSON.parse(asset('previous.json'));
 const hash = value => createHash('sha256').update(value).digest('hex');
-const modelAliases = {opus:'gpt-6.2-astra', sonnet:'gpt-6.2-sol', haiku:'gpt-6.1-terra'};
 const quote = value => '\x60' + value + '\x60';
 const intakeDescriptions = {
   plan:'**План вместе, дальше сами.** Архитектор готовит design brief для задачи крупнее мелкой правки. Пользователь утверждает план. Реализация, тесты и ревью идут до готового MR с остановкой на необратимой развилке.',
@@ -59,35 +59,44 @@ function adaptProse(text) {
 }
 
 function models(raw) {
-  const header = '| Роль | Модель | Причина |';
-  const aliases = Object.entries(modelAliases).map(([tier,model]) => [tier,'| ' + quote(tier) + ' | ' + quote(model) + ' | Соответствие исходного тира роли. Доступность проверяется перед запуском. |']);
-  const lines = raw.split('\n');
-  const tableHeader = [...markupLines(raw)].find(row => row.content === header);
-  if (tableHeader) {
-    const start = raw.slice(0,tableHeader.start).split('\n').length - 1;
-    let end = start + 1;
-    const present = new Set();
-    while (end < lines.length && lines[end].startsWith('|')) {
-      present.add(lines[end].split('|')[1].trim().replaceAll('\x60',''));
-      end++;
+  // Архивные пояснения к выбору роли сохраняются. Модель для неё уже задана в брифе.
+  const row = [...markupLines(raw)].find(line => line.content.startsWith('**Модели:**'));
+  const declaration = row && /^\*\*Модели:\*\*\s*(.+)$/.exec(row.content);
+  if (!declaration) return nativeModelTable(raw);
+  const notes = [], rows = [];
+  for (const part of declaration[1].split(/;\s*/)) {
+    const entry = /^\x60?([a-z][\w-]*)\x60?\s+[—–-]\s+\x60?([\w.-]+)\x60?\s*:\s*(.+)$/.exec(part);
+    if (!entry) throw Error('Не удалось разобрать проектные модели. Передайте MODELS таблицей «Роль | Модель | Причина».');
+    const [, role, model, reason] = entry;
+    const name = quote(({db:'database',front:'frontend'})[role] ?? role);
+    if (isClaudeModel(model)) notes.push('- ' + name + ' — ' + reason + ' Модель задаёт бриф роли.');
+    else rows.push('| ' + name + ' | ' + quote(model) + ' | ' + reason + ' |');
+  }
+  const table = rows.length ? ['| Роль | Модель | Причина |','|---|---|---|',...rows].join('\n') : '';
+  const section = ['**Модели**',notes.join('\n'),table].filter(Boolean).join('\n\n');
+  return nativeModelTable(raw.slice(0,row.start) + section + raw.slice(row.end));
+}
+
+// Убирает служебные строки прежней поставки из таблицы моделей. Ручные строки
+// ролей и примеры внутри fenced-блоков остаются на месте.
+function nativeModelTable(text) {
+  const edits = [];
+  let end = -1;
+  for (const row of markupLines(text)) {
+    if (row.content === '| Роль | Модель | Причина |') { end = row.end; continue; }
+    if (end < 0 || !/^\r?\n$/.test(text.slice(end,row.start)) || !row.content.startsWith('|')) { end = -1; continue; }
+    end = row.end;
+    const cells = row.content.split('|').slice(1,-1).map(cell => cell.trim().replace(/^\x60(.*)\x60$/, '$1'));
+    const [role, model, reason] = cells;
+    if (isClaudeModel(role) && reason === 'Соответствие исходного тира роли. Доступность проверяется перед запуском.') {
+      const newline = /^\r?\n/.exec(text.slice(row.end))?.[0] ?? '';
+      edits.push([row.start, row.end + newline.length]);
+    } else if (isClaudeModel(role) || isClaudeModel(model)) {
+      throw Error('Таблица моделей: укажи роль и ID модели Codex. Строка: ' + row.content);
     }
-    lines.splice(end,0,...aliases.filter(([tier]) => !present.has(tier)).map(([,row]) => row));
-    return lines.join('\n');
   }
-  const rows = [header,'|---|---|---|',...aliases.map(([,row]) => row)];
-  // Старый setup описывал проектные исключения строкой «роль — тир: причина».
-  const declaration = /^\*\*Модели:\*\*\s*(.+)$/m.exec(raw);
-  if (declaration) {
-    const parts = declaration[1].split(/;\s*/);
-    const entries = parts.map(part => /^\x60?([a-z][\w-]*)\x60?\s+[—–-]\s+\x60?([\w.-]+)\x60?\s*:\s*(.+)$/.exec(part));
-    if (entries.every(Boolean)) {
-      for (const [,role,model,reason] of entries) {
-        rows.push('| ' + quote(({db:'database',front:'frontend'})[role] ?? role) + ' | ' + quote(modelAliases[model] ?? model) + ' | ' + reason + ' |');
-      }
-      raw = raw.replace(declaration[0], '').trim();
-    } else throw Error('Не удалось разобрать проектные модели. Передайте MODELS таблицей «Роль | Модель | Причина».');
-  }
-  return [raw, '**Модели**\n\n' + rows.join('\n')].filter(Boolean).join('\n\n');
+  for (const [start, stop] of edits.reverse()) text = text.slice(0,start) + text.slice(stop);
+  return text;
 }
 
 function archiveRoster(value, rosters) {
@@ -219,6 +228,7 @@ export function refreshCharter({file,text,template,prior,ui,version,rosters={},g
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const line = str => str.replaceAll('\n',eol);
   const plain = str => str.replaceAll('\r\n','\n');
+  if (file === 'team-charter') text = nativeModelTable(text);
   const expected = blocks(template,file);
   const existing = blocks(text,file);
   const historic = prior ? blocks(plain(prior),file) : new Map();

@@ -1,7 +1,7 @@
 ---
 name: product-agent
 description: "Product/analyst (role `product` in team-charter), PM pipeline plus UX audit. INTAKE: turns a raw feature wish into a structured problem statement. PRD: writes the product requirements document. DECOMPOSE: assembles work items from dev-agent consults. ESTIMATE: consolidates relative estimates (S/M/L/XL with evidence). PLAN: produces the phased implementation plan with handoff. UX-AUDIT: post-release UX and discoverability review. Writes docs, never production code."
-model: opus
+model: gpt-6.2-astra
 color: orange
 memory: "project"
 tools: [Read, Grep, Glob, Write, WebSearch, Bash, Skill, TaskCreate, TaskUpdate, SendMessage]

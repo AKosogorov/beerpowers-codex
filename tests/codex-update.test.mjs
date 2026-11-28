@@ -116,34 +116,20 @@ function fixture(t, state = legacyState) {
   return { root, env, put, read, run, plan, apply, snapshot };
 }
 
-test('update drops only exact legacy rule bindings and preserves rule files and hand-edited rules', t => {
+test('update ignores obsolete role settings and preserves project rules', t => {
   const ws = fixture(t);
-  const settings = '.codex/role-settings.json';
-  const backend = '.codex/rules/backend.md';
-  const frontend = '.codex/rules/frontend.md';
-  const oldBackend = '# Серверный код\n\nПроверь валидацию входа, права на ресурс и существующие границы модулей. Для Laravel проверь Request и Policy проекта. Авторизацию проверяй на сервере для каждого защищённого действия.\n';
-  const handEdited = '# Клиентский код\r\n\r\nОсобые требования к каталогу.  \r\n';
-  ws.put('projects/catalog/composer.json', '{"require":{"laravel/framework":"*"}}');
-  ws.put('projects/catalog/package.json', '{"dependencies":{"nuxt":"*"}}');
-  execFileSync('git', ['-C', join(ws.root, 'projects/catalog'), 'add', 'composer.json', 'package.json'], {env:ws.env});
-  ws.put(settings, JSON.stringify({
-    stacks: ['laravel', 'nuxt'],
-    rules: {backend: ['app'], frontend: ['app', 'components', 'composables', 'layouts', 'pages', 'plugins']},
-  }));
-  ws.put(backend, oldBackend.replaceAll('\n', '\r\n'));
-  ws.put(frontend, handEdited);
+  const settings = '.codex/role-settings.json', scoped = '.codex/role-settings/catalog.json';
+  const rule = '.codex/rules/frontend.md', text = '# Клиентский код\r\nОсобые требования проекта.  \r\n';
+  ws.put(settings, '{');
+  ws.put(scoped, '{"rules":{"frontend":["src"]}}');
+  ws.put(rule, text);
   const plan = ws.plan();
-  assert.equal(plan.changes.some(change => change.path === settings), true);
-  assert.equal(JSON.parse(ws.read(settings)).rules.backend[0], 'app');
-  assert.equal(plan.changes.some(change => change.path === backend), false);
-  assert.equal(plan.changes.some(change => change.path === frontend), true);
+  assert.ok(plan.changes.every(change => ![settings, scoped, rule].includes(change.path)));
   ws.apply(plan.planId);
-  assert.equal(existsSync(join(ws.root, settings)), false);
-  assert.deepEqual(JSON.parse(ws.read(frontend).split(/\r?\n/)[1].slice('paths: '.length)),
-    ['app', 'components', 'composables', 'layouts', 'pages', 'plugins'].map(dir => 'projects/catalog/' + dir));
-  assert.equal(ws.read(backend), oldBackend.replaceAll('\n', '\r\n'));
-  assert.ok(ws.read(frontend).endsWith(handEdited));
-  assert.equal(ws.plan().changes.some(change => change.path === settings), false);
+  assert.equal(ws.read(settings), '{');
+  assert.equal(ws.read(scoped), '{"rules":{"frontend":["src"]}}');
+  assert.equal(ws.read(rule), text);
+  assert.deepEqual(ws.plan().changes, []);
 });
 
 test('update plans against the manifest and preserves manual bytes, custom settings and the other track', t => {

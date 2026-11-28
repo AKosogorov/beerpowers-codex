@@ -1,7 +1,7 @@
 ---
 name: backend-agent
 description: "Backend-разработчик проекта (роль `backend` в charter) на {{BACKEND}}: слой приложения и API, валидация входа, DTO, доменные сервисы и репозитории модулей, фоновые задачи, интеграции с внешними системами за интерфейсом. Держит статанализ, строгую типизацию и границы модулей. Схему БД и миграции не трогает — это роль `database`."
-model: opus
+model: gpt-6.2-astra
 color: orange
 memory: "project"
 tools: [Bash, Read, Grep, Glob, Write, Edit, Skill, SendMessage]

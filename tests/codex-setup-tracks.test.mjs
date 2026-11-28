@@ -198,29 +198,38 @@ test('migration replaces the archived role index guidance once and preserves not
   assert.deepEqual(readFileSync(join(f.root, source + 'feedback_topic.md')), detail);
 });
 
-test('setup moves legacy scoped skills and path bindings to their owners before removing configuration', t => {
-  const f = fixture(t), meta = path => parseFrontmatter(f.read(path)).fields;
-  f.put('projects/web/README.md', 'Tests: git diff --check\n');
-  f.git('projects/web', 'init', '-q');
-  const checks = Object.fromEntries(['api','web'].map(name => [name, {command:'git diff --check', source:'README.md', profile:'main-default'}]));
-  const options = {BEERPOWERS_TESTS_JSON:JSON.stringify(checks)};
-  f.setup('apply', 'both', options);
-  const base = '.codex/role-settings', brief = '.codex/agents/testing-agent.md', rule = '.codex/rules/status.md';
-  f.put(rule, '# Проверка статуса\n');
-  f.put(base + '.json', '{"rules":{}}');
-  for (const name of ['api','web']) f.put(base + '/' + name + '.json', JSON.stringify({
-    team:['architect','tester'], skills:{tester:['skill-' + name], 'team-lead':['lead-' + name]}, rules:{status:[name === 'api' ? 'src' : 'ui']},
-  }));
-  const preview = f.setup('plan', undefined, options);
-  assert.match(preview, /DELETE \.codex\/role-settings\/api\.json/);
-  assert.deepEqual(meta(brief).skills, []);
-  f.setup('apply', undefined, options);
-  assert.deepEqual(meta(brief).project_skills, {api:['skill-api'], web:['skill-web']});
-  assert.deepEqual(meta('.codex/team-lead.md').project_skills, {api:['lead-api'], web:['lead-web']});
-  assert.deepEqual(meta(rule).paths, ['projects/api/src', 'projects/web/ui']);
-  assert.ok(f.read(rule).endsWith('# Проверка статуса\n'));
-  assert.ok(!f.has(base + '.json') && !f.has(base + '/api.json') && !f.has(base + '/web.json'));
-  assert.match(f.setup('apply', undefined, options), /^No changes\.$/m);
+test('setup writes native role models for fresh, archived and existing briefs', t => {
+  const f = fixture(t);
+  const fields = name => parseFrontmatter(f.read('.codex/agents/' + name + '-agent.md')).fields;
+  const path = '.codex/agents/testing-agent.md';
+  f.put('.claude/agents/architect-agent.md', '---\nname: architect-agent\ndescription: Проектный архитектор\nmodel: haiku\ncolor: green\ntools: [Read]\n---\nСвоё правило.\n');
+  f.setup('apply');
+  assert.equal(fields('architect').model,'gpt-6.2-astra');
+  assert.equal(fields('architect').color,'green');
+  assert.equal(fields('testing').model,'gpt-6.2-sol');
+  assert.equal(fields('explorer').model,'gpt-6.1-terra');
+  assert.doesNotMatch(f.read('.codex/team-charter.md'), /\b(?:opus|sonnet|haiku)\b/);
+  f.put(path, f.read(path).replace('gpt-6.2-sol','claude-sonnet-4-5'));
+  assert.match(f.setup('plan'), /UPDATE \.codex\/agents\/testing-agent\.md/);
+  f.setup('apply');
+  assert.equal(fields('testing').model,'gpt-6.2-sol');
+  assert.match(f.setup('apply'), /^No changes\.$/m);
+});
+
+test('setup and role packets ignore obsolete role settings', t => {
+  const f = fixture(t);
+  const settings = '.codex/role-settings.json', scoped = '.codex/role-settings/api.json';
+  const content = JSON.stringify({team:['unknown'], skills:{tester:['obsolete-skill']}, rules:{missing:['src']}});
+  f.put(settings, content);
+  f.put(scoped, '{');
+  assert.doesNotMatch(f.setup('plan'), /role-settings|obsolete-skill/);
+  f.setup('apply');
+  assert.doesNotMatch(f.packet('tester'), /obsolete-skill/);
+  assert.doesNotMatch(f.read('.codex/team-charter.md'), /unknown|obsolete-skill/);
+  assert.deepEqual(parseFrontmatter(f.read('.codex/agents/testing-agent.md')).fields.skills, []);
+  assert.match(f.setup('apply'), /^No changes\.$/m);
+  assert.equal(f.read(settings), content);
+  assert.equal(f.read(scoped), '{');
 });
 
 test('local Git settings migrate privately on setup and update', t => {

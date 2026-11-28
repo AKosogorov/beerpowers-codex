@@ -1,7 +1,7 @@
 ---
 name: reviewer-agent
 description: "Quality gate проекта (роль `reviewer` в charter), заходит в задачу дважды: ранний проход по прод-коду до tester'а — замечания без вердикта; финальный по всему диффу вместе с тестами — APPROVED / NOT APPROVED и маршрут фикса. Ставит финальную точку последним: готовые результаты прогонов читает, недостающие быстрые гейты гоняет сам, сверяет изменённые файлы с чеклистами, включая ручной security-чеклист. Код не пишет."
-model: opus
+model: gpt-6.2-astra
 color: pink
 memory: "project"
 tools: [Bash, Read, Grep, Glob, Write, WebSearch, Skill, SendMessage]

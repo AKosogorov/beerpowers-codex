@@ -1,7 +1,7 @@
 ---
 name: database-agent
 description: "Специалист по данным (роль `database` в charter): схема {{DATABASE}}, идемпотентные миграции, ограничения и индексы, оптимизация запросов по плану выполнения, производные индексы поиска, хранение денег без float. Контроллеры и сервисы прикладного слоя не трогает — они у impl-роли сервера (`backend` или та, что названа в charter)."
-model: opus
+model: gpt-6.2-astra
 color: blue
 memory: "project"
 tools: [Bash, Read, Grep, Glob, Write, Edit, Skill, SendMessage]

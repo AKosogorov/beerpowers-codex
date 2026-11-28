@@ -229,7 +229,7 @@ function plan(previous) {
   state.after = configUpdate(original, to);
   state.actions.push('update workspace version/schema');
   const changes = [...projected.values()].filter(doc => doc.before !== doc.after).map(doc => ({
-    ...doc, beforeHash:doc.before === null ? null : sha(doc.before), afterHash:doc.after === null ? null : sha(doc.after),
+    ...doc, beforeHash:doc.before === null ? null : sha(doc.before), afterHash:sha(doc.after),
   }));
   const summary = {from, to, changes: changes.map(({path, actions, beforeHash, afterHash}) => ({path, actions, beforeHash, afterHash}))};
   if (setup.advisories.length) summary.advisories = setup.advisories;
@@ -238,11 +238,6 @@ function plan(previous) {
 
 function replaceFile(change) {
   const path = workspacePath(root, change.path);
-  if (change.after === null) {
-    if (sha(read(path)) !== change.beforeHash) throw Error('Workspace changed: ' + change.path);
-    unlinkSync(path);
-    return;
-  }
   mkdirSync(dirname(path), {recursive:true});
   const privateCopy = change.path === '.codex/git-settings.local.json';
   let temporaryDirectory = dirname(path);
