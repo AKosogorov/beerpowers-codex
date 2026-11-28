@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateEngineTemplates } from './check_migrations.mjs';
+import { referenceFiles, referenceNamespace } from '../../plugins/beerpowers/bin/lib/role-references.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 process.chdir(root);
@@ -165,21 +166,37 @@ function packageChecks() {
     verifyAll(resources.filter(path => !statSync(pkg + '/' + path, {throwIfNoEntry: false})?.size)
       .map(path => 'Missing or empty integration resource: ' + path));
   });
-  check('Relative Markdown links in README and Codex resources', () => {
+  check('Markdown links to workspace files and installed references', () => {
     const issues = [];
+    const references = referenceFiles();
+    const referencePaths = new Set(references.values());
     const generated = new Map([['.codex/team-charter.md', 'charter/team-charter.md'], ['.codex/team-lead.md', 'charter/team-lead.md']]);
-    for (const path of ['README.md', 'TOUR.md', ...files(pkg)].filter(p => p.endsWith('.md'))) {
+    for (const path of ['AGENTS.md', 'CHANGELOG.md', 'README.md', 'ROADMAP.md', 'TOUR.md', ...files(pkg)].filter(p => p.endsWith('.md'))) {
       let fence;
       for (const line of text(path).split(/\r?\n/)) {
         const marker = line.match(/^\s*(`{3,}|~{3,})/)?.[1];
         if (marker) { if (!fence) fence = marker; else if (marker.startsWith(fence)) fence = null; continue; }
         if (fence) continue;
-        for (const [, target] of line.matchAll(/\]\(([^)\s]+)\)/g)) {
+        for (const [, label] of line.matchAll(/(?:^|[\s\x60|(])(beerpowers:reference\/[\p{L}\p{N}._/-]+\.md)\b/gu)) {
+          if (!references.has(label)) issues.push(`${path} → ${label}`);
+        }
+        for (const [, target, title] of line.matchAll(/\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g)) {
           if (/^(?:https?:|mailto:|#)/i.test(target)) continue;
           const name = target.split('#')[0];
+          if (name.startsWith(referenceNamespace + '/')) {
+            if (!references.has(name)) issues.push(`${path} → ${target}`);
+            continue;
+          }
           const dest = path === pkg + '/templates/AGENTS.md' && generated.has(name)
             ? join(pkg, 'templates', generated.get(name)) : resolve(dirname(path), decodeURIComponent(name));
           if (!existsSync(dest)) issues.push(`${path} → ${target}`);
+          if (referencePaths.has(dest) && !title?.startsWith(referenceNamespace + '/')) {
+            issues.push(`${path} → ${target}: укажите адрес установленного справочника`);
+          }
+          if (title?.startsWith(referenceNamespace + '/')) {
+            const [label, fragment] = title.split('#');
+            if (references.get(label) !== dest || fragment !== target.split('#')[1]) issues.push(`${path} → ${target} ≠ ${title}`);
+          }
         }
       }
     }

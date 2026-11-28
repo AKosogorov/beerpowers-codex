@@ -329,7 +329,7 @@ die "BEERPOWERS_INTAKE must be plan, stages or autonomous\n" unless $intake =~ /
 my $pm_section = <<'PM';
 ## PM-конвейер
 
-Продуктовая роль product ведёт intake, PRD, декомпозицию, оценку и план. Для одной небольшой фазы без развилок достаточно feature-brief. Артефакты и подтверждения живут в docs/features/<slug>/. Статусы идут от Draft через Approved и In Development до Done. После handoff разработчик берёт утверждённый план через task-start. Условия переходов и handoff — в reference/feature-pipeline.md#артефакты-и-статусы установленного пакета.
+Продуктовая роль product ведёт intake, PRD, декомпозицию, оценку и план. Для одной небольшой фазы без развилок достаточно feature-brief. Артефакты и подтверждения живут в docs/features/<slug>/. Статусы идут от Draft через Approved и In Development до Done. После handoff разработчик берёт утверждённый план через task-start. Условия переходов и handoff — в beerpowers:reference/feature-pipeline.md#артефакты-и-статусы установленного пакета.
 
 В PM-состав входят product, architect и владельцы затронутых слоёв, включая tester по необходимости. На консультации технические роли читают исходники и передают пути, риски и оценки S/M/L/XL с уверенностью и доказательствами. Перед разработкой нужен dev-состав с финальным reviewer.
 PM

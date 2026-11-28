@@ -412,12 +412,12 @@ const checks = [
   ['entry-policy', 'Маски Claude Code во входных инструкциях', 'Перенеси проектные ограничения к их владельцам и проверь исполняемый механизм отдельно.'],
   ['quality-gates', 'Дубли и формат напоминаний о гейтах', 'Сверь порядок масок и оставь профильные проверки перед общими.'],
   ['script-paths', 'Пути проектных скриптов', 'Сверь пути скриптов в .codex/scripts/ с .codex/bin/.'],
-  ['barriers', 'Схема .codex/barriers.json', 'Сверь переключатели с reference/hooks.md.'],
+  ['barriers', 'Схема .codex/barriers.json', 'Сверь переключатели с beerpowers:reference/hooks.md.'],
   ['shared-settings', 'Доступность общих настроек для Git', 'Сверь правила игнорирования общих настроек.'],
   ['entry-override', 'Вход в устав и пакет роли при наличии AGENTS.override.md', 'Сверь фактические проектные инструкции в Codex.'],
   ['rule-owners', 'Маркеры правил у владельцев из индекса памяти', 'Оставь правило в файле-владельце и добавь ссылку на него в остальных документах.'],
   ['rule-snapshots', 'Изменчивые факты в правилах и формах команд', 'Сверь предупреждения и перенеси наблюдения в тематическую память при необходимости.'],
-  ['qa-settings', 'Конфигурация параллельных проверок и мутаций', 'Сверь tests с reference/parallel-tests.md и reference/mutants.md.'],
+  ['qa-settings', 'Конфигурация параллельных проверок и мутаций', 'Сверь tests с beerpowers:reference/parallel-tests.md и beerpowers:reference/mutants.md.'],
 ];
 
 export function checkWorkspace(root) {

@@ -318,7 +318,7 @@ function loadMutants(file, ws, root) {
     if (typeof repo !== 'string') fail(`${id}: нет repo — ни у мутанта, ни сверху`);
     const cfg = ws.tests.repos[repo];
     if (!cfg) fail(`${id}: у «${repo}» нет записи tests.repos в .codex/workspace.json`);
-    if (!cfg.mutate) fail(`${id}: у «${repo}» нет tests.repos.${repo}.mutate — команда мутанта, справка — reference/mutants.md плагина`);
+    if (!cfg.mutate) fail(`${id}: у «${repo}» нет tests.repos.${repo}.mutate — команда мутанта, справка — beerpowers:reference/mutants.md`);
     for (const k of ['file', 'find', 'replace']) if (typeof m[k] !== 'string') fail(`${id}.${k}: ждётся строка`);
     const filter = m.filter ?? doc.filter;
     if (typeof filter !== 'string' || !filter.trim()) fail(`${id}: нет filter — ни у мутанта, ни сверху`);

@@ -11,7 +11,7 @@ PM-трек документирует, dev-трек реализует. Арт�
 Конвейер двухтрековый — церемония пропорциональна риску, не классу задачи «фича». Полный трек
 даёт intake и четыре плановых артефакта, fast добавляет к intake один `feature-brief.md` (PRD-lite + work items с evidence +
 план одной фазы + handoff). Критерий выбора трека и момент выбора — в
-[`$beerpowers feature`](../commands/feature.md); ось риска — в [`intake-protocol.md`](intake-protocol.md).
+[`$beerpowers feature`](../commands/feature.md); ось риска — в [`intake-protocol.md`](beerpowers:reference/intake-protocol.md).
 
 Точность описания важнее скорости: декомпозиция и оценка обязаны опираться на consult профильных
 dev-ролей по реальному коду, а не на предположения product-роли. Consult read-only — dev-роли
@@ -79,7 +79,7 @@ dev-ролей по реальному коду, а не на предполож
   `$beerpowers task-start <имя>`, путями к утверждённым документам, фазой, критериями и gates.
   Для одной фазы S/M укажи [team-lazy](../commands/team-lazy.md), для нескольких фаз — [team-up](../commands/team-up.md).
 - Исполнителю нужны scope, критерии приёмки, фазы и проверки из утверждённых плана и PRD или brief.
-  Ссылки сохраняются в preflight. Для класса feature применяется [маршрут реализации](feature-implementation.md).
+  Ссылки сохраняются в preflight. Для класса feature применяется [маршрут реализации](beerpowers:reference/feature-implementation.md).
 - Исполнитель обновляет статусы документов при старте (`In Development`) и после гейтов (`Done`).
   Отклонения с обоснованием и новые крайние случаи записывает в историю плана или brief. Эти записи использует [$beerpowers retro](../commands/retro.md).
 - В реестр решений и фич (`memory/decisions.md`) добавляется строка `YYYY-MM-DD · название фичи · docs/features/<slug>/` после передачи секции `## Handoff`. При возврате эта строка подтверждает завершённость.

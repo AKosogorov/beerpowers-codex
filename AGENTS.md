@@ -7,15 +7,15 @@
 - [`plugins/beerpowers/`](plugins/beerpowers/) — всё, что устанавливается в профиль Codex. [Манифест](plugins/beerpowers/.codex-plugin/plugin.json) хранит версию поставки и SHA исходного BeerPowers.
 - [`skills/`](plugins/beerpowers/skills/) содержит девять навыков с самостоятельными условиями запуска и адаптер явных вызовов `$beerpowers <команда>`. [`commands/`](plugins/beerpowers/commands/) содержит инструкции 16 публичных команд. Вспомогательные процессы остаются внутренними.
 - [`bin/`](plugins/beerpowers/bin/) и [`hooks/`](plugins/beerpowers/hooks/) работают из установленного пакета. Рабочий каталог обработчика — внешний Git-workspace.
-- [`templates/`](plugins/beerpowers/templates/) содержит ресурсы setup и update. Редактируйте их в пакете. Проектные инструкции и ручные правки учитывайте по правилам миграции. [Доставка инструкций](plugins/beerpowers/reference/instructions.md) · [Миграции](plugins/beerpowers/reference/migrations.md)
+- [`templates/`](plugins/beerpowers/templates/) содержит ресурсы setup и update. Редактируйте их в пакете. Проектные инструкции и ручные правки учитывайте по правилам миграции. [Доставка инструкций](plugins/beerpowers/reference/instructions.md "beerpowers:reference/instructions.md") · [Миграции](plugins/beerpowers/reference/migrations.md "beerpowers:reference/migrations.md")
 
 ## Проверки
 
-Из корня checkout запустите `node .github/scripts/validate_codex.mjs`. Для быстрой проверки пакета добавьте `--package-only`. Для полной проверки нужны Node 24, Git, Perl и браузер, доступный CDP. Windows использует Perl из Git for Windows. [Выбор Node](plugins/beerpowers/reference/node-runtime.md) · [CI](.github/workflows/validate.yml)
+Из корня checkout запустите `node .github/scripts/validate_codex.mjs`. Для быстрой проверки пакета добавьте `--package-only`. Для полной проверки нужны Node 24, Git, Perl и браузер, доступный CDP. Windows использует Perl из Git for Windows. [Выбор Node](plugins/beerpowers/reference/node-runtime.md "beerpowers:reference/node-runtime.md") · [CI](.github/workflows/validate.yml)
 
-Для правок управляемых шаблонов или их генерации проверьте [реестр миграций](plugins/beerpowers/reference/migrations.md#локальная-проверка-реестра) командой `node .github/scripts/check_migrations.mjs --base <коммит>`.
+Для правок управляемых шаблонов или их генерации проверьте [реестр миграций](plugins/beerpowers/reference/migrations.md#локальная-проверка-реестра "beerpowers:reference/migrations.md#локальная-проверка-реестра") командой `node .github/scripts/check_migrations.mjs --base <коммит>`.
 
-Интеграционные тесты в [`tests/`](tests/) работают с временными workspace, локальными API и учебными данными. Установку, доверие к хукам и работу ролей проверяйте отдельно в новом чате Codex Desktop. [Проверка хуков](plugins/beerpowers/reference/hooks.md)
+Интеграционные тесты в [`tests/`](tests/) работают с временными workspace, локальными API и учебными данными. Установку, доверие к хукам и работу ролей проверяйте отдельно в новом чате Codex Desktop. [Проверка хуков](plugins/beerpowers/reference/hooks.md "beerpowers:reference/hooks.md")
 
 ## Работа с ветками
 
@@ -23,7 +23,7 @@
 
 ## Выпуск
 
-В каждом PR в `main` с изменениями в `plugins/beerpowers/` повысьте `version` в [манифесте Codex](plugins/beerpowers/.codex-plugin/plugin.json) относительно `main` и добавьте непустой раздел `## <версия> — <ГГГГ-ММ-ДД>` в [CHANGELOG](CHANGELOG.md). Для исправлений повышайте patch, для новых возможностей — minor. Изменения поставляемых шаблонов и генерации также внесите в [реестр миграций](plugins/beerpowers/reference/migrations.md) под тем же номером.
+В каждом PR в `main` с изменениями в `plugins/beerpowers/` повысьте `version` в [манифесте Codex](plugins/beerpowers/.codex-plugin/plugin.json) относительно `main` и добавьте непустой раздел `## <версия> — <ГГГГ-ММ-ДД>` в [CHANGELOG](CHANGELOG.md). Для исправлений повышайте patch, для новых возможностей — minor. Изменения поставляемых шаблонов и генерации также внесите в [реестр миграций](plugins/beerpowers/reference/migrations.md "beerpowers:reference/migrations.md") под тем же номером.
 
 Перед публикацией PR обновите `origin/main` через `git fetch` и запустите `node .github/scripts/check_release.mjs origin/main`. Проверка `release-version` повторяет её в CI для результата слияния с `main`. Если другой PR уже занял выбранную версию, выполните rebase и обновите номер в манифесте, CHANGELOG и записи миграции.
 

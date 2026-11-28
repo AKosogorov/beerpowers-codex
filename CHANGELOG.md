@@ -1,25 +1,25 @@
 # Изменения BeerPowers для Codex
 
-Версия релиза совпадает с полем `version` в [манифесте Codex](plugins/beerpowers/.codex-plugin/plugin.json). Для уже настроенных проектов порядок обновления описан в [реестре миграций](plugins/beerpowers/reference/migrations.md).
+Версия релиза совпадает с полем `version` в [манифесте Codex](plugins/beerpowers/.codex-plugin/plugin.json). Для уже настроенных проектов порядок обновления описан в [реестре миграций](plugins/beerpowers/reference/migrations.md "beerpowers:reference/migrations.md").
 
 ## 0.12.0 — 2026-11-28
 
 - При переносе из Claude setup восстанавливает порядок устава, инструкций тимлида и брифов ролей. Проектный текст, памятки, правила гейтов и обратная связь остаются доступны команде.
-- Тимлид выбирает модель и effort для каждого запуска. Состав и Read on spawn задаёт устав. Setup записывает модель Codex прямо в YAML брифа, рядом с параметрами и навыками роли. [Порядок миграции](plugins/beerpowers/reference/claude-migration.md)
+- Тимлид выбирает модель и effort для каждого запуска. Состав и Read on spawn задаёт устав. Setup записывает модель Codex прямо в YAML брифа, рядом с параметрами и навыками роли. [Порядок миграции](plugins/beerpowers/reference/claude-migration.md "beerpowers:reference/claude-migration.md")
 - Личный Git-профиль переносится локально с проверкой конфликтов и исключений Git.
-- Роль с правом `Read` может запросить список справочников через `beerpowers:reference` и прочитать документ из установленной версии плагина. Для обязательного чтения укажите `beerpowers:reference/<файл>.md` в колонке `Read on spawn` устава.
+- Роль с правом `Read` может запросить список справочников через `beerpowers:reference` и прочитать документ из установленной версии плагина. Для обязательного чтения укажите `beerpowers:reference/<файл>.md` в колонке `Read on spawn` устава. В командах, навыках и уставе справочники используют этот же адрес, включая ссылки на разделы. Файлы задачи читаются по пути в workspace.
 
 ## 0.11.0 — 2026-11-27
 
-- Setup поставляет профиль песочницы `beerpowers`, правила команд и запреты `PreToolUse` для checkout и worktree. [Запреты проекта](plugins/beerpowers/reference/hooks.md#запреты-проекта)
+- Setup поставляет профиль песочницы `beerpowers`, правила команд и запреты `PreToolUse` для checkout и worktree. [Запреты проекта](plugins/beerpowers/reference/hooks.md#запреты-проекта "beerpowers:reference/hooks.md#запреты-проекта")
 
-- Setup сохраняет памятки команд с короткими именами. Doctor находит проверяемые дубли инструкций, проблемы гейтов и сломанные пути после миграции. Индекс техдолга пересобирается отдельной командой `tech-debt-index`. [Перенос из Claude](plugins/beerpowers/reference/claude-migration.md)
+- Setup сохраняет памятки команд с короткими именами. Doctor находит проверяемые дубли инструкций, проблемы гейтов и сломанные пути после миграции. Индекс техдолга пересобирается отдельной командой `tech-debt-index`. [Перенос из Claude](plugins/beerpowers/reference/claude-migration.md "beerpowers:reference/claude-migration.md")
 
-- Снимки страниц используют канал процесса Chrome для подключения к CDP. На Windows запуск с временным профилем повторяется при сбое подключения. [Браузерные проверки](plugins/beerpowers/reference/parallel-tests.md)
+- Снимки страниц используют канал процесса Chrome для подключения к CDP. На Windows запуск с временным профилем повторяется при сбое подключения. [Браузерные проверки](plugins/beerpowers/reference/parallel-tests.md "beerpowers:reference/parallel-tests.md")
 
-- В setup можно выбрать состав команды и порядок согласования работы. Роли получают доменные инварианты, а для UI команда сохраняет выбранные ширины и условия сокращения матрицы. [Работа команды](plugins/beerpowers/reference/team-decisions.md) · [Приёмка UI](plugins/beerpowers/reference/ui-acceptance.md)
-- Добавлены проверка содержимого дерева после squash, сверка состава пересобранного стенда и планы выпуска по Git-профилям. [Стенды и выпуск](plugins/beerpowers/reference/git-flow.md#стенды-и-выпуск-проекта)
-- Трекер поддерживает проектные адаптеры, чтение комментариев и отдельную выгрузку вложений. Расширенный doctor проверяет браузер и возможность подготовить тесты на текущей машине. [Трекер](plugins/beerpowers/commands/tracker.md) · [Диагностика](plugins/beerpowers/reference/doctor-checks.md)
+- В setup можно выбрать состав команды и порядок согласования работы. Роли получают доменные инварианты, а для UI команда сохраняет выбранные ширины и условия сокращения матрицы. [Работа команды](plugins/beerpowers/reference/team-decisions.md "beerpowers:reference/team-decisions.md") · [Приёмка UI](plugins/beerpowers/reference/ui-acceptance.md "beerpowers:reference/ui-acceptance.md")
+- Добавлены проверка содержимого дерева после squash, сверка состава пересобранного стенда и планы выпуска по Git-профилям. [Стенды и выпуск](plugins/beerpowers/reference/git-flow.md#стенды-и-выпуск-проекта "beerpowers:reference/git-flow.md#стенды-и-выпуск-проекта")
+- Трекер поддерживает проектные адаптеры, чтение комментариев и отдельную выгрузку вложений. Расширенный doctor проверяет браузер и возможность подготовить тесты на текущей машине. [Трекер](plugins/beerpowers/commands/tracker.md) · [Диагностика](plugins/beerpowers/reference/doctor-checks.md "beerpowers:reference/doctor-checks.md")
 
 - `workspace-clean` собирает план уборки рабочих деревьев, сборок, медиа задач и кеша. Тимлид применяет согласованный объём одним вызовом. [Уборка проекта](plugins/beerpowers/commands/worktrees-clear.md)
 - `workspace-check.mjs` проверяет структуру и память настроенного проекта. Ключ `--list` показывает перечень проверок. [Диагностика](plugins/beerpowers/commands/doctor.md)
@@ -32,8 +32,8 @@
 ## 0.10.0 — 2026-11-24
 
 - Выделены девять самостоятельных навыков Codex с автоматическим подбором по запросу. Все 15 команд доступны через явный вызов `$beerpowers <команда>`.
-- Перед записью в Трекер или публикацией MR/PR показывается полный черновик. Подтверждение привязано к его содержимому. Подпись сохраняет выбранный стиль и точный ID модели. [Трекер](plugins/beerpowers/commands/tracker.md) · [Публикация](plugins/beerpowers/reference/git-flow.md#подготовка-mr-и-pr)
-- Напоминание тестеру учитывает свежие снимки задачи, к которой привязана роль. [Проверка хуков](plugins/beerpowers/reference/hooks.md)
+- Перед записью в Трекер или публикацией MR/PR показывается полный черновик. Подтверждение привязано к его содержимому. Подпись сохраняет выбранный стиль и точный ID модели. [Трекер](plugins/beerpowers/commands/tracker.md) · [Публикация](plugins/beerpowers/reference/git-flow.md#подготовка-mr-и-pr "beerpowers:reference/git-flow.md#подготовка-mr-и-pr")
+- Напоминание тестеру учитывает свежие снимки задачи, к которой привязана роль. [Проверка хуков](plugins/beerpowers/reference/hooks.md "beerpowers:reference/hooks.md")
 - Репозиторий поставляет BeerPowers для Codex из собственного каталога пакетов. Сборка и тесты больше не требуют отдельной копии исходного пакета.
 - CI проверяет поставку на Windows и Linux. GitHub Release использует версию манифеста Codex и заметки из этого файла.
 
@@ -43,13 +43,13 @@
 
 ## 0.8.1 — 2026-11-24
 
-- Исправлен запуск хуков в Windows PowerShell при пробелах в пути к Git или каталогу плагина. После обновления проверьте доверие к определениям хуков в Codex Desktop. [Проверка хуков](plugins/beerpowers/reference/hooks.md)
+- Исправлен запуск хуков в Windows PowerShell при пробелах в пути к Git или каталогу плагина. После обновления проверьте доверие к определениям хуков в Codex Desktop. [Проверка хуков](plugins/beerpowers/reference/hooks.md "beerpowers:reference/hooks.md")
 
 ## 0.8.0 — 2026-11-24
 
 - Добавлены инженерный и продуктовый onboard, быстрый и полный маршруты `feature`, decision brief и аудит токенов по предоставленной выгрузке метрик Codex. Утверждённая постановка фичи передаётся в разработку.
 - Локальное обновление workspace показывает план изменений управляемых блоков и копий. Новый план позволяет продолжить обновление после прерывания.
 - Добавлены инструменты для параллельных тестов и мутационных проб.
-- Проверены многопродуктовая настройка, рабочие деревья Git, локальный CDP, экспорт Figma и работа со снимком задачи Трекера. [Покрытие проверок](plugins/beerpowers/reference/compatibility.md)
+- Проверены многопродуктовая настройка, рабочие деревья Git, локальный CDP, экспорт Figma и работа со снимком задачи Трекера. [Покрытие проверок](plugins/beerpowers/reference/compatibility.md "beerpowers:reference/compatibility.md")
 
 Предшествующие выпуски исходного BeerPowers доступны в его [журнале изменений](https://github.com/AKosogorov/beerpowers/blob/7c5bb1221d65b5c46c8af96fe7bc4ce979fc596e/CHANGELOG.md).

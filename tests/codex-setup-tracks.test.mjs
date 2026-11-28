@@ -94,7 +94,11 @@ test('migration resolves active instruction owners and pins only proven historic
   f.put('.claude/rules/guide.md','---\npaths: [projects/api/src/**]\n---\n# Проверка\n');
   f.put(memory,index + fenced);
   f.put(report,note + fenced);
-  f.put(local,'Местный файл `workspace.json`.\n');
+  const projectLink = '[Git задачи](../tasks/UNIT-1/git-flow.md) и `reference/git-flow.md`.';
+  const oldGuide = '`$packageRoot/reference/git-flow.md` и [раздел]($packageRoot/reference/git-flow.md#гейты).';
+  const newGuide = '`beerpowers:reference/git-flow.md` и [раздел](beerpowers:reference/git-flow.md#гейты).';
+  f.put('.claude/reference/git-flow.md','Архивный справочник\n');
+  f.put(local,'Местный файл `workspace.json`.\n' + projectLink + '\n' + oldGuide + '\n`.claude/reference/git-flow.md`\n');
   f.put('memory/project/workspace.json','{}\n');
   f.git('.','add','.claude','memory');
   f.git('.','-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Архив');
@@ -108,7 +112,7 @@ test('migration resolves active instruction owners and pins only proven historic
   const want = note.replace('workspace.json',sha + ':.claude/workspace.json').replace('guide.md',sha + ':.claude/rules/guide.md');
   assert.equal(f.read(report),want + fenced + newLine);
   assert.equal(f.read(memory),index.replace('team-lead.md','.codex/team-lead.md').replace('.claude/team-charter','.codex/team-charter') + fenced);
-  assert.equal(f.read(local),'Местный файл `workspace.json`.\n');
+  assert.equal(f.read(local),'Местный файл `workspace.json`.\n' + projectLink + '\n' + newGuide + '\n`beerpowers:reference/git-flow.md`\n');
   assert.match(f.setup('apply'),/No changes\./);
   f.put(report,note + fenced);
   const plan = f.update();

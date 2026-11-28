@@ -6,7 +6,7 @@
 Этот файл читают все роли по ссылке в `AGENTS.md` и из `role-packet`: здесь то, что нужно исполнителю —
 проект, стек, правила работы с кодом, инструментами и памятью. Как team-lead
 ведёт задачу — класс, гейты, effort, закрытие — в `.codex/team-lead.md`, а git — в
-`reference/git-flow.md`; роли их не читают.
+`beerpowers:reference/git-flow.md`; роли их не читают.
 <!-- /beerpowers:engine -->
 
 ## Назначение
@@ -180,7 +180,7 @@ read-only. Имя ветки — код задачи (`<КОД>`). Запрет�
 В PowerShell используй `taskkill /F /PID <свой PID> /T`, в Git Bash — `taskkill //F //PID <свой PID> //T`, на POSIX — `kill <свой pid>`; свой
 headless Chrome — иначе, по скиллу `beerpowers-codex:page-screenshot`: его дерево процессов `taskkill`
 переживает. Барьер —
-`guard-kill` плагина, если он включён в `.codex/barriers.json`. Охват обработчика описан в `reference/hooks.md` установленного пакета.
+`guard-kill` плагина, если он включён в `.codex/barriers.json`. Охват обработчика описан в `beerpowers:reference/hooks.md` установленного пакета.
 
 **Перечисление процессов — только с таймаутом и не через WMI.** `tasklist`, `Get-Process`, `ps`
 запускаются с ограничением времени: в Git Bash — `timeout 60 <команда>`, в PowerShell — с таймаутом процесса. На Windows они и `taskkill` временами висят минутами,
@@ -283,7 +283,7 @@ charter до отчёта.
 (единая обработка ошибок, общий composable) в месте использования не комментируется: он описан
 в правилах проекта. Барьер — `guard-comments` плагина, если он включён: печатает добавленные
 комментарии, ссылки на контекст задачи называет отдельно и блокирует коммит один раз; остальное
-содержание не оценивает (`reference/hooks.md`).
+содержание не оценивает (`beerpowers:reference/hooks.md`).
 
 **Линт в конце задачи.** Менял код — прогони линтер с автофиксом **только по изменённым
 файлам**, не по всему репозиторию. Формы по скоупу — `memory/commands/<скоуп>.md`.
@@ -412,7 +412,7 @@ charter до отчёта.
 **Память роли — только обратная связь человека.** Тимлид передаёт роли личную память из `.codex/agent-memory/<роль>/` в `role-packet`. Пишутся туда только `feedback_*.md` — поправки человека к работе роли, у `product`
 в том числе калибровка оценок — и индекс `MEMORY.md`. Техники проб, факты о проекте, формы
 команд — знание проекта: оно идёт в `memory/` по таблице «Куда класть находку», иначе
-расходится с ним. Барьер — `guard-agent-memory` плагина (`reference/hooks.md`).
+расходится с ним. Барьер — `guard-agent-memory` плагина (`beerpowers:reference/hooks.md`).
 <!-- /beerpowers:engine -->
 
 {{MEMORY_FILES_EXTRA}}
@@ -449,7 +449,7 @@ charter до отчёта.
 
 Чем артефакты отличаются друг от друга, что в них класть нельзя, как заполняются `git-flow.md`
 и `tracker/`, где лежат макеты и скриншоты, что извлекает `$beerpowers retro` после мержа —
-`reference/tasks-layout.md` установленного пакета.
+`beerpowers:reference/tasks-layout.md` установленного пакета.
 <!-- /beerpowers:engine -->
 
 <!-- beerpowers:engine codex-team -->

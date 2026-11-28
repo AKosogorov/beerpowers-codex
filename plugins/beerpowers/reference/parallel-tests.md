@@ -1,6 +1,6 @@
 # Параллельный прогон тестов проекта
 
-Тестер запускает [parallel-tests.mjs](../bin/parallel-tests.mjs) из корня внешнего workspace. Исполняемый файл остаётся в каталоге пакета. Используй [проверенный Node](node-runtime.md) и штатную команду тестирования проекта. В PowerShell:
+Тестер запускает [parallel-tests.mjs](../bin/parallel-tests.mjs) из корня внешнего workspace. Исполняемый файл остаётся в каталоге пакета. Используй [проверенный Node](beerpowers:reference/node-runtime.md) и штатную команду тестирования проекта. В PowerShell:
 
 ```powershell
 $qa = Join-Path $packageRoot 'bin/parallel-tests.mjs'
@@ -52,9 +52,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Inspect the QA summary and worker logs' }
 }
 ```
 
-На Windows получи `$makeBash` и `$makeShim` по [инструкции запуска Make](command-runtime.md#проверки-проекта-через-make). В том же процессе PowerShell перед вызовом раннера выполни `$env:BEERPOWERS_MAKE_BASH = $makeBash` и `$env:BEERPOWERS_MAKE_SHIM = $makeShim`. В Unix передай путь из `command -v bash` и `$packageRoot/bin/make-shim` через те же переменные. Путь к текущей версии пакета берётся из сеанса.
+На Windows получи `$makeBash` и `$makeShim` по [инструкции запуска Make](beerpowers:reference/command-runtime.md#проверки-проекта-через-make). В том же процессе PowerShell перед вызовом раннера выполни `$env:BEERPOWERS_MAKE_BASH = $makeBash` и `$env:BEERPOWERS_MAKE_SHIM = $makeShim`. В Unix передай путь из `command -v bash` и `$packageRoot/bin/make-shim` через те же переменные. Путь к текущей версии пакета берётся из сеанса.
 
-После полного прогона зафиксируй SHA и код выхода в [отчёте feature](feature-implementation.md). Для измерения чувствительности теста к конкретной ошибке используй [мутационные пробы](mutants.md).
+После полного прогона зафиксируй SHA и код выхода в [отчёте feature](beerpowers:reference/feature-implementation.md). Для измерения чувствительности теста к конкретной ошибке используй [мутационные пробы](beerpowers:reference/mutants.md).
 
 ## Слоты и результаты
 
