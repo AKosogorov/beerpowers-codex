@@ -93,6 +93,9 @@ sub handover {
     return (route($repo, 'handover', $code, $action))[0];
 }
 isnt((route('', 'feature-state', $code))[0], 0, 'ambiguous product selection stops');
+put("$dir/preflight.md", $brief =~ s/^Base-SHA api: .+$/Base-SHA api: $bases{web}/mr);
+isnt((route('api', 'feature-state', $code))[0], 0, 'legacy snapshot cannot override a different preflight base');
+put("$dir/preflight.md", $brief);
 for my $name (qw(api web)) {
     my ($status, $out) = route($name, 'feature-state', $code);
     is($status, 0, "status $name");

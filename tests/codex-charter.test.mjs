@@ -73,6 +73,18 @@ test('в архивном уставе адрес пакета меняется 
   assert.equal(updated, text.replace(oldPm, oldPm.replace('reference/', 'beerpowers:reference/')));
 });
 
+test('обновление убирает только сгенерированную таблицу гейтов в слоте тимлида', () => {
+  const file = 'team-lead', template = fileText(file);
+  const table = '| Проект | Команды обязательных проверок |\n|---|---|\n| `api` | `memory/commands/api.md`, раздел «Гейты» |';
+  const notes = 'Своя команда перед таблицей.\n\n' + table + '\n\nАбзац проекта после таблицы.';
+  const current = renderCharter({...settings, file, template, overrides:{GATES_EXTRA:notes}});
+  const refresh = text => refreshCharter({file, template, text, ui:true});
+  const fenced = '\n~~~md\n' + table + '\n~~~\n';
+  assert.equal(refresh(current + fenced), current.replace(table + '\n\n','') + fenced);
+  const custom = current.replace(table, table + '\n| Свой сервис | Ручная проверка |');
+  assert.equal(refresh(custom), custom);
+});
+
 test('update replaces a published block at its location and preserves manual text, fenced marker examples and CRLF',()=>{
   const file='team-lead', template=fileText(file);
   const active=renderCharter({...settings,file,template});

@@ -28,6 +28,7 @@ sub stage_seven_task {
         validate_task_name($code);
         my $dir = task_path("memory/tasks/$code");
         $ordinary = 0 if -f "$dir/checkouts.json" || -f "$dir/git-flow.md" || -d "$dir/tracker";
+        $ordinary = 0 if -f "$dir/preflight.md" && markdown_prose(read_file("$dir/preflight.md")) =~ /^Base-SHA [\w.-]+:/m;
     }
     return 0 if $ordinary && !-e '.git/beerpowers-task-start-7.json';
     my $preview = 0;

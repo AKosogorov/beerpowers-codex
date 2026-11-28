@@ -83,6 +83,15 @@ sub context {
     if ($kind eq 'SessionStart' || $kind eq 'SubagentStart') {
         my $reader = abs_path("$Bin/../bin/role-files.mjs");
         $reader = Cygwin::posix_to_win_path($reader) if $^O eq 'cygwin';
+        my $package = dirname(dirname($reader));
+        if ($^O eq 'cygwin' || $^O eq 'MSWin32') {
+            $package = Cygwin::posix_to_win_path(abs_path("$Bin/..")) if $^O eq 'cygwin';
+            $package =~ s/'/''/g;
+            push @notes, "BeerPowers: в начале каждого вызова PowerShell с командой из установленного пакета выполни строку:\n\$packageRoot = '$package'\nРабочий каталог — корень внешнего workspace.";
+        } else {
+            $package =~ s/'/'\\''/g;
+            push @notes, "BeerPowers: в начале каждого вызова оболочки с командой из установленного пакета выполни строку:\npackageRoot='$package'\nРабочий каталог — корень внешнего workspace.";
+        }
         push @notes, "BeerPowers: для перехода по Markdown-ссылке с подсказкой beerpowers:reference/ передай ссылку целиком одним аргументом в Read через node \"$reader\". Обработчик открывает выбранный справочник установленного пакета. Если уже видишь адрес beerpowers:reference/…, передай только его.";
     }
     my $text = join "\n\n", grep { defined && length } @notes;

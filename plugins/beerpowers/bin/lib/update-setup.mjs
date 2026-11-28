@@ -11,8 +11,10 @@ function perlPath() {
   return join(dirname(dirname(git)), 'usr', 'bin', 'perl.exe');
 }
 
-export function workspaceCheck(root, pkg, mode) {
+export function workspaceCheck(root, pkg, mode, previous) {
   const env = {...process.env};
+  if (previous) env.BEERPOWERS_PREVIOUS_PACKAGE = previous;
+  else delete env.BEERPOWERS_PREVIOUS_PACKAGE;
   delete env.BEERPOWERS_TESTS_JSON;
   delete env.BEERPOWERS_TRACK; // An update preserves the chosen product/development track.
   try {
@@ -26,8 +28,8 @@ export function workspaceCheck(root, pkg, mode) {
 
 // Same plan as interactive setup. Base64 preserves CRLF, empty files and the
 // absence of a final newline regardless of the calling shell's encoding.
-export function setupAdditions(root, pkg) {
-  const plan = JSON.parse(workspaceCheck(root, pkg, 'plan-json'));
+export function setupAdditions(root, pkg, previous) {
+  const plan = JSON.parse(workspaceCheck(root, pkg, 'plan-json', previous));
   if (plan.format !== 1 || !Array.isArray(plan.changes)) throw Error('Unrecognized setup preview');
   const changes = plan.changes.map(({action, path, content}) => {
     if (!/^(?:\.codex\/|memory\/|AGENTS\.md$|\.gitignore$)/.test(path)) throw Error('Unexpected setup target: ' + path);

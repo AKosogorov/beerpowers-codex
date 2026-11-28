@@ -8,7 +8,7 @@
 ## `git-flow.md` — заводится при старте задачи, до первой ветки
 
 Содержит ровно две вещи, которых не видно ни в git, ни в постановке. Его читает
-`node <пакет>/bin/git-workspace.mjs resolve <КОД> <репо>`; механика веток — [справочник плагина](git-flow.md "beerpowers:reference/git-flow.md").
+`node "$packageRoot/bin/git-workspace.mjs" resolve <КОД> <репо>`; механика веток — [справочник плагина](git-flow.md "beerpowers:reference/git-flow.md").
 
 **Первое — база задачи, по репозиторию**, если она не та, что даёт профиль репозитория:
 ветка задачи-предшественника или релизная. База задаёт сразу и базу диффа, и цель MR. Прочерк —
@@ -47,7 +47,7 @@
 конкретного трекера; для Яндекс Трекера — одной командой:
 
 ```bash
-node <пакет>/bin/tracker.mjs <КОД> --comments --save memory/tasks/<КОД>/tracker
+node "$packageRoot/bin/tracker.mjs" sync <КОД>
 ```
 
 Скрипта трекера в проекте нет — каталога `tracker/` нет тоже: постановку
@@ -108,7 +108,7 @@ node <пакет>/bin/tracker.mjs <КОД> --comments --save memory/tasks/<КО�
 `Hover.png`, `SearchEmpty.png`):
 
 ```bash
-node <пакет>/bin/figma-export.mjs '<ссылка на фрейм>' --save <КОД>
+node "$packageRoot/bin/figma-export.mjs" '<ссылка на фрейм>' --save <КОД>
 ```
 
 Посмотреть скриншот по ходу разговора, не сохраняя, — тот же скрипт с `--out "$SCRATCHPAD/…"`.

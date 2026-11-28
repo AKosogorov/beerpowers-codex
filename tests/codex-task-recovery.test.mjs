@@ -108,18 +108,19 @@ test('two release tasks recover after failed setup, preserving dependency base a
   f.pass('task-start',...args);
   assert.equal(f.exists(journal),false);
   assert.equal(f.git(f.root,'rev-parse','HEAD^'),f.head);
-  const records = [first,second].map(code=>JSON.parse(f.read('memory/tasks/' + code + '/checkouts.json')));
-  assert.deepEqual(records.map(v=>v.repos[0].base),['release/winter',first]);
-  assert.deepEqual(records[1].dependencies,[first]);
+  const resolver = path.join(path.dirname(handler),'git-workspace.mjs');
+  const records = [first,second].map(code=>JSON.parse(execFileSync(process.execPath,[resolver,'resolve',code,'api'],{cwd:f.root})));
+  assert.deepEqual(records.map(r=>r.base),['release/winter',first]);
   for (const [i,code] of [first,second].entries()) {
-    const r = records[i].repos[0];
+    const r = records[i];
+    assert.equal(f.exists('memory/tasks/' + code + '/checkouts.json'),false);
     assert.equal(r.baseSha,f.release);
     assert.equal(f.git(path.join(f.root,r.checkout),'branch','--show-current'),code);
     assert.equal(f.git(path.join(f.root,r.checkout),'rev-parse','HEAD'),f.release);
   }
   assert.match(f.read('memory/tasks/' + second + '/git-flow.md'),/## Зависимости[\s\S]*winter-route/);
   const argsLog = f.read('.git/fixture-hooks.jsonl').trim().split('\n').map(s=>JSON.parse(s));
-  const expected = [second,'api',path.join(f.root,records[1].repos[0].checkout),...tail];
+  const expected = [second,'api',path.join(f.root,records[1].checkout),...tail];
   assert.deepEqual(argsLog,[expected,expected]);
   assert.equal(f.git(f.root,'status','--porcelain'),'');
 });

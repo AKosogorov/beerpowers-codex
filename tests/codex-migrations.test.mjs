@@ -17,7 +17,8 @@ function fixture(t) {
   const pkg = join(cwd, 'plugins', 'beerpowers');
   for (const file of ['.codex-plugin/plugin.json', registry, 'templates/AGENTS.md',
     'templates/charter/team-charter.md', 'templates/charter/team-lead.md', 'templates/memory/MEMORY.md',
-    'bin/memory-template.mjs', 'bin/workspace.pl']) {
+    'templates/memory/project/safety-rules.md', 'templates/memory/issues/known-issues.md',
+    'templates/memory/project/glossary.md', 'bin/memory-template.mjs', 'bin/workspace.pl']) {
     const destination = join(pkg, file);
     mkdirSync(dirname(destination), {recursive: true});
     cpSync(join(source, file), destination, {recursive: true});
@@ -78,6 +79,13 @@ test('project prose outside a managed block can change independently', t => {
   f.append('templates/memory/MEMORY.md', '\nПроектный текст.\n');
   const result = f.run('--base', 'HEAD');
   assert.equal(result.status, 0, result.stderr);
+});
+
+test('deleting both safety boundaries from the template is detected even when the body survives', t => {
+  const f = fixture(t), path = 'templates/memory/project/safety-rules.md';
+  f.replace(path, '<!-- beerpowers:engine never-generic -->', '');
+  f.replace(path, '<!-- /beerpowers:engine -->', '');
+  assert.match(f.run('--base', 'HEAD').stderr, /missing engine block never-generic/);
 });
 
 test('changing managed generation names its emitted block', t => {

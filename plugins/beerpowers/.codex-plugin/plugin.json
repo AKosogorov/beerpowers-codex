@@ -1,7 +1,7 @@
 {
   "name": "beerpowers-codex",
   "repository": "https://github.com/AKosogorov/beerpowers-codex",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Единый вход BeerPowers для Codex: продуктовая и инженерная память, планирование фич, командная разработка, проверки и обновление workspace.",
   "author": {
     "name": "kosogorov"

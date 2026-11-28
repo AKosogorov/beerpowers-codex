@@ -77,8 +77,16 @@ async function fixture(t) {
       return JSON.parse(Buffer.concat(chunks));
     }
     if (url.pathname === route + '/transitions') return send(200,state.transitions);
-    if (url.pathname === route + '/links') return send(200,state.links);
-    if (url.pathname === route + '/links/9' && req.method === 'DELETE') return send(200,{});
+    if (url.pathname === route + '/links' && req.method === 'GET') return send(200,state.links);
+    if (url.pathname === route + '/links' && req.method === 'POST') {
+      const link = await body();
+      state.links.push({id:9,type:{id:link.relationship},object:{key:link.issue}});
+      return send(201,state.links.at(-1));
+    }
+    if (url.pathname === route + '/links/9' && req.method === 'DELETE') {
+      state.links = state.links.filter(link => link.id !== 9);
+      return send(200,{});
+    }
     if (url.pathname === route + '/transitions/closed/_execute' && req.method === 'POST') {
       state.writes.push(await body());
       return send(200,{});
@@ -98,6 +106,10 @@ async function fixture(t) {
       const comment = await body();
       if (state.failComment) return send(503,{});
       state.writes.push(comment);
+      if (state.loseCommentResponse) {
+        state.comments.push({id:2,createdBy:{id:'7',display:'Тест'},text:comment.text});
+        return res.destroy();
+      }
       return send(201,{id:2});
     }
     if (url.pathname === '/v2/issues' && req.method === 'POST') {
@@ -280,6 +292,97 @@ test('explicit QA comment uploads its checklist and replay sends it only once',a
   assert.match(state.uploads[0],/<!doctype html><title>QA<\/title>/);
   assert.equal(state.writes.length,1);
   assert.deepEqual(state.writes[0].attachmentIds,[12]);
+});
+
+test('team lead can manage links and own comment, separate attachments and deletion require confirmation',async t=>{
+  const {directory,run,state} = await fixture(t);
+  const file = 'note.md';
+  fs.writeFileSync(path.join(directory,file),'Исправлено [с файлом](proof.txt)');
+  fs.writeFileSync(path.join(directory,'proof.txt'),'доказательство');
+  await run('write','link',key,'связана','TEST-1','--request','add-link');
+  assert.equal(state.links[0].object.key,'TEST-1');
+  await run('write','unlink',key,'TEST-1','--request','remove-link');
+  assert.deepEqual(state.links,[]);
+  const edit = ['write','edit-comment',key,'1',file];
+  const change = await run(...edit);
+  assert.equal(change.comment.text,state.comments[0].text);
+  assert.equal((await run(...edit,'--request','correct-note')).status,'ok');
+  assert.deepEqual(state.writes[0].attachmentIds,[12]);
+  assert.ok(state.requests.includes('POST /v2/attachments'));
+  assert.ok(!state.requests.includes('POST /v2/issues/' + key + '/attachments'));
+  for (const args of [['attach',key,'proof.txt'], ['detach',key,'12'], ['delete-comment',key,'1']]) {
+    await assert.rejects(run('write',...args,'--request','direct'), /requires preview and confirmation/);
+    assert.equal((await run('write',...args)).status,'needs-confirmation');
+  }
+  state.comments[0].createdBy = {id:'8',display:'Другой автор'};
+  state.requests.length = 0;
+  await assert.rejects(run(...edit,'--request','foreign-edit'),/чужой комментарий/);
+  await assert.rejects(run('write','delete-comment',key,'1'),/чужой комментарий/);
+  assert.ok(state.requests.every(request => request.startsWith('GET ')));
+});
+
+test('a created MR independently supplies QA and verbatim deployment comments, replay resumes a partial delivery',async t=>{
+  const {directory,run,state,env} = await fixture(t);
+  const task = 'feature/' + key;
+  const folder = path.join(directory,'memory','tasks',task);
+  fs.mkdirSync(folder,{recursive:true});
+  const html = path.join(folder,key + '-qa.html');
+  const section = ['## Для выкладки на стенд','','1. Открыть [инструкцию](doc/run.md).  ',
+    '2. Проверить журнал.', '', '~~~', '## пример заголовка', '~~~', '### Данные', 'Таблица orders.'].join('\r\n');
+  async function prepare(n,actions) {
+    const url = 'https://gitlab.example/team/repo/-/merge_requests/' + n;
+    const args = ['mr-comments',key,task,url,actions ? 'yes' : 'no'];
+    const child = exec(process.execPath,[tool,...args],{cwd:directory,env});
+    const body = actions ? section : '## Для выкладки на стенд\n\nДействий нет.';
+    child.child.stdin.end(body + '\r\n\r\n## Зачем\r\n\r\nЗадача.');
+    return JSON.parse((await child).stdout).comments;
+  }
+  async function send(item,retry=false) {
+    const args = ['write','comment',key,'-',...(item.verbatim ? ['--verbatim'] : []),
+      ...(retry ? ['--retry'] : []),'--request',item.request];
+    const command = exec(process.execPath,[tool,...args],{cwd:directory,env});
+    command.child.stdin.end(item.text);
+    return JSON.parse((await command).stdout);
+  }
+  for (const qa of [false,true]) for (const steps of [false,true]) {
+    if (qa) fs.writeFileSync(html,'<title>QA</title>');
+    const mr = 1 + Number(qa) * 2 + Number(steps);
+    const comments = await prepare(mr,steps);
+    assert.deepEqual(comments.map(c => c.kind),[...(qa ? ['qa'] : []),...(steps ? ['deploy'] : [])]);
+    const initialWrites = state.writes.length;
+    for (const c of comments) {
+      if (qa && c.kind === 'deploy') {
+        state.failComment = true;
+        await assert.rejects(send(c),/HTTP 503/);
+        state.failComment = false;
+        const repeated = await prepare(mr,steps);
+        assert.deepEqual(repeated,comments);
+        await send(repeated[0]);
+        assert.equal(state.writes.length,initialWrites + 1);
+        await assert.rejects(send(repeated[1]),/check Tracker/i);
+        await send(repeated[1],true);
+      } else await send(c);
+      const written = state.writes.at(-1);
+      if (c.kind === 'deploy') {
+        assert.equal(c.text,section);
+        assert.equal(written.text.split('\n\n{orange}')[0],section);
+        assert.equal(written.attachmentIds,undefined);
+      } else assert.deepEqual(written.attachmentIds,[12]);
+    }
+    assert.equal(state.writes.length-initialWrites,comments.length);
+  }
+  assert.equal(state.uploads.length,2);
+
+  // Сервер сохранил запись, но соединение закрылось до получения ID.
+  const lost = (await prepare(7,true))[1];
+  const before = state.writes.length;
+  state.loseCommentResponse = true;
+  await assert.rejects(send(lost));
+  state.loseCommentResponse = false;
+  await assert.rejects(send(lost),/check Tracker/i);
+  const remote = await run('read',key,'--comments');
+  assert.equal(remote.comments.find(c => c.text.startsWith(section))?.id,2);
+  assert.equal(state.writes.length,before + 1);
 });
 
 test('separate confirmation binds target, content and attachments before writing to local API',async t=>{

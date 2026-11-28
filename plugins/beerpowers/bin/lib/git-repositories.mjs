@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { cleanupTaskCode } from './cleanup-paths.mjs';
+import { markupLines } from './markdown-engine.mjs';
 
 export function fail(message) { throw new Error(message); }
 export const root = fs.realpathSync.native('.');
@@ -130,7 +131,28 @@ export function taskData(code, { legacy = false } = {}) {
   }
   const dir = 'memory/tasks/' + code;
   const file = safe(dir + '/git-flow.md');
+  // Старые задачи могли хранить состав и базу только в checkouts.json.
   const saved = readJson(dir + '/checkouts.json', {});
+  const brief = safe(dir + '/preflight.md');
+  const pins = new Map();
+  if (fs.existsSync(brief)) {
+    for (const {content} of markupLines(fs.readFileSync(brief, 'utf8'))) {
+      if (!/^Base-SHA(?: |:)/.test(content)) continue;
+      const match = /^Base-SHA(?: ([A-Za-z0-9_][\w.-]*))?: ([a-f0-9]{40}|[a-f0-9]{64})$/.exec(content);
+      if (!match || pins.has(match[1])) fail('Invalid or duplicate Base-SHA in ' + dir + '/preflight.md');
+      pins.set(match[1], match[2]);
+    }
+  }
+  if (pins.size > 1 && pins.has(undefined)) fail('Ambiguous unqualified Base-SHA in ' + dir + '/preflight.md');
+  if (saved.repos) {
+    for (const [name, sha] of pins) {
+      const record = name ? saved.repos.find(r => r.name === name) : saved.repos.length === 1 && saved.repos[0];
+      if (!record && name) saved.repos.push({name, baseSha:sha});
+      else if (!record || (record.baseSha && record.baseSha !== sha)) fail('Base-SHA differs from legacy checkouts.json: ' + code);
+    }
+  } else if (pins.size && !pins.has(undefined)) {
+    saved.repos = [...pins].map(([name, baseSha]) => ({name, baseSha}));
+  }
   const rows = new Map();
   let dependencies = saved.dependencies ?? [];
   if (fs.existsSync(file)) {
@@ -148,7 +170,7 @@ export function taskData(code, { legacy = false } = {}) {
     const section = /^## Зависимости\s*$([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(content)?.[1];
     if (section && !dependencies.length) dependencies = [...section.matchAll(/`([A-Za-z0-9._/-]+)`/g)].map(m => m[1]);
   }
-  return { dir, file, saved, rows, dependencies };
+  return { dir, file, saved, rows, dependencies, pins };
 }
 export function worktrees(repo) {
   const records = [];
@@ -173,19 +195,28 @@ export function checkedOut(repo, code) {
 export function localSha(repo, ref) {
   return git(safe(repo.path), ['rev-parse', '--verify', '-q', ref + '^{commit}'], true);
 }
-export function resolveLocal(repo, code) {
-  const { rows, saved } = taskData(code);
-  const record = saved.repos?.find(r => r.name === repo.name);
-  if (record?.override && !rows.get(repo.name)?.base) fail('Restore explicit base in git-flow.md for ' + repo.name);
+export function taskCheckout(repo, code, record, pinned) {
   const checkout = checkedOut(repo, code);
+  if (!checkout) return null;
+  if (record?.checkout && record.checkout !== checkout) fail('Legacy checkout differs from Git: ' + repo.name);
+  if (pinned && (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(pinned) ||
+      git(safe(checkout), ['merge-base', '--is-ancestor', pinned, 'HEAD'], true) === null)) {
+    fail('Invalid saved base SHA for ' + repo.name);
+  }
+  return checkout;
+}
+export function resolveLocal(repo, code) {
+  const { rows, saved, pins } = taskData(code);
+  const record = saved.repos?.find(r => r.name === repo.name);
+  if (saved.repos && !record) fail('Product missing from task: ' + repo.name);
+  if (record?.override && !rows.get(repo.name)?.base) fail('Restore explicit base in git-flow.md for ' + repo.name);
+  const pinned = pins.get(repo.name) ?? pins.get(undefined) ?? record?.baseSha;
+  const checkout = taskCheckout(repo, code, record, pinned);
   if (!checkout) fail('Task branch not checked out: ' + code + ' in ' + repo.name);
   const remoteDefault = git(safe(repo.path), ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], true)?.replace(/^origin\//, '');
   const base = branchName(rows.get(repo.name)?.base || record?.base || (repo.profile !== 'custom' && remoteDefault));
-  let baseSha;
-  if (record?.base === base && record?.baseSha) {
-    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(record.baseSha)) fail('Invalid saved base SHA for ' + repo.name);
-    baseSha = localSha(repo, record.baseSha);
-  } else {
+  let baseSha = pinned;
+  if (!baseSha) {
     const tip = localSha(repo, 'refs/remotes/origin/' + base) || localSha(repo, 'refs/heads/' + base);
     if (tip) baseSha = git(safe(checkout), ['merge-base', 'HEAD', tip], true);
   }

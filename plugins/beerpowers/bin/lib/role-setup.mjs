@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { workspacePath } from './ui-workspace.mjs';
 import { readCharter } from './role-context.mjs';
-import { blocks, markupLines } from './markdown-engine.mjs';
+import { blocks, knownBlock, markupLines, restoreBoundaries } from './markdown-engine.mjs';
 import { isClaudeModel, parseFrontmatter, roleFilename, roleMetadata, setFrontmatterField } from './role-metadata.mjs';
 
 const templates = fileURLToPath(new URL('../../templates/', import.meta.url));
@@ -43,9 +43,9 @@ export function adaptBrief(body) {
     .replaceAll('Ты серверный разработчик', 'Ты backend-разработчик')
     .replace(/скажи `frontend` через( *\r?\n[ \t]*)(?:SendMessage|сообщением в текущей команде)/g, 'уведомь `frontend`$1сообщением в текущей команде')
     .replaceAll('через `SendMessage`', 'сообщением в текущей команде')
-    .replaceAll('node .claude/bin/git-base.mjs <репо> <КОД>', 'node <пакет>/bin/git-workspace.mjs resolve <КОД> <репо>')
+    .replaceAll('node .claude/bin/git-base.mjs <репо> <КОД>', 'node "$packageRoot/bin/git-workspace.mjs" resolve <КОД> <репо>')
     .replaceAll('из ответа `git-base.mjs`', 'из ответа `git-workspace.mjs resolve`')
-    .replaceAll('`.claude/bin/cdp-run.mjs`', '`node <пакет>/bin/cdp-run.mjs`')
+    .replaceAll('`.claude/bin/cdp-run.mjs`', '`node "$packageRoot/bin/cdp-run.mjs"`')
     .replace(/\.claude\/agent-memory\/([\w-]+)-agent\//g, (_, name) => '.codex/agent-memory/' + roleId(name) + '/')
     .replace(/\.claude\/(?=(?:team-charter|team-lead)\.md|agents\/|rules\/)/g, '.codex/');
 }
@@ -112,10 +112,11 @@ export function refreshRole(text, canonical, previous, ui, file) {
   const templateBody = doc => doc.replace(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
   canonical = templateBody(canonical);
   if (previous) previous = templateBody(previous);
-  const current = blocks(text, file);
-  if (!current.size) return header + text; // Полностью авторский бриф.
   const expected = blocks(normalize(canonical), file);
   const prior = previous ? blocks(normalize(previous), file) : null;
+  text = restoreBoundaries(text, file, expected, prior);
+  const current = blocks(text, file);
+  if (!current.size) return header + text; // Полностью авторский бриф.
   const headings = (doc, markers) => [...markupLines(doc)].filter(row => /^#{1,6}\s+/.test(row.content) &&
     ![...markers.values()].some(marker => marker.start <= row.start && row.end <= marker.end));
   const anchors = [...expected.values(), ...headings(normalize(canonical), expected)].sort((a,b) => a.start - b.start);
@@ -135,7 +136,7 @@ export function refreshRole(text, canonical, previous, ui, file) {
     }
     const old = normalize(found.text), priorText = prior?.get(name)?.text;
     if (enabled && old === block.text) continue;
-    if (old !== block.text && adaptBrief(old) !== block.text && old !== priorText) {
+    if (old !== block.text && adaptBrief(old) !== block.text && old !== priorText && !knownBlock(file, found, block)) {
       if (priorText && priorText !== block.text) throw Error('Conflict ' + file + ' [' + name + ']');
       continue; // Без известной предыдущей редакции проектная запись сохраняется.
     }
@@ -258,6 +259,7 @@ export function planRoles(input) {
       if (!Object.hasOwn(existingFields, key)) result = setFrontmatterField(result, key, parsed.fields[key] ?? defaults[key], path);
     }
     if (isClaudeModel(parseFrontmatter(result, path).fields.model)) result = setFrontmatterField(result, 'model', defaults.model, path);
+    result = refreshRole(result, raw, null, ui, file);
     result = applySkills(result, role, Boolean(base && hasHeader(base)) || Boolean(archive));
     const fields = roleMetadata(result, role, path);
     change(path, before, result);

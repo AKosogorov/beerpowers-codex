@@ -132,7 +132,8 @@ test('local bare origin and local HTTP stubs accept provider-specific reviewed r
   const f = fixture(t);
   const api = await stub(t);
   for (const provider of ['gitlab', 'github']) {
-    const input = provider === 'gitlab' ? { gitlab: { iid: 7, assigneeId: 10, reviewerIds: { tester: 11 } } } : {};
+    const input = provider === 'gitlab' ? { gitlab: { iid: 7, assigneeId: 10, reviewerIds: { tester: 11 } } } :
+      { deploy: '1. Открыть [инструкцию](doc/run.md).\n2. Применить миграцию.' };
     const r = f.run(provider, input);
     assert.equal(r.status, 0, r.stderr);
     const preview = JSON.parse(r.stdout);
@@ -176,6 +177,15 @@ test('local bare origin and local HTTP stubs accept provider-specific reviewed r
       assert.equal(sent.body.head, task);
       assert.equal(sent.body.base, 'main');
     }
+    const tracker = fileURLToPath(new URL('../plugins/beerpowers/bin/tracker.mjs', import.meta.url));
+    const github = provider === 'github';
+    const url = github ? 'https://github.com/team/app/pull/7' : 'https://gitlab.invalid/group/team/app/-/merge_requests/7';
+    const comments = spawnSync(process.execPath,[tracker,'mr-comments',task,task,url,github ? 'yes' : 'no'],{
+      cwd:f.root,env:f.env,encoding:'utf8',input:github ? sent.body.body : sent.body.description
+    });
+    assert.equal(comments.status,0,comments.stderr);
+    assert.deepEqual(JSON.parse(comments.stdout).comments.map(c => c.text),
+      github ? ['## Для выкладки на стенд\n\n' + input.deploy] : []);
   }
   assert.equal(f.git(f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads'), 'refs/heads/main');
   assert.equal(f.git(f.root, 'status', '--porcelain'), '');

@@ -514,7 +514,6 @@ sub generate_charter {
     my %input = (
         file => $name, template => decode('UTF-8', $template), source => decode('UTF-8', $source),
         rosters => $rosters, intake => $intake, ui => $ui ? JSON::PP::true : JSON::PP::false,
-        guides => {map { $_ => $test_inputs{$_}{guide} } grep { $test_inputs{$_}{guide} } @repos},
         slots => {map { $_ => decode('UTF-8', $slots->{$_}) } keys %$slots},
         overrides => {map { $_ => decode('UTF-8', $overrides->{$_}) } keys %$overrides},
     );
@@ -522,12 +521,17 @@ sub generate_charter {
         $input{text} = decode('UTF-8', $existing);
         $input{version} = $version;
     }
-    my ($fh, $arg) = tempfile('beerpowers-charter-XXXXX', TMPDIR => 1, UNLINK => 1);
+    return render_json('charter', \%input);
+}
+
+sub render_json {
+    my ($name, $input) = @_;
+    my ($fh, $arg) = tempfile('beerpowers-render-XXXXX', TMPDIR => 1, UNLINK => 1);
     binmode $fh;
-    print {$fh} $json->encode(\%input);
+    print {$fh} $json->encode($input);
     close $fh or die "$arg: $!\n";
     my $node = $ENV{BEERPOWERS_NODE} || 'node';
-    my $script = "$Bin/lib/charter.mjs";
+    my $script = "$Bin/lib/$name.mjs";
     if ($^O eq 'cygwin') {
         $node = Cygwin::win_to_posix_path($node) if $node =~ /^[A-Za-z]:/;
         ($script, $arg) = map { Cygwin::posix_to_win_path($_) } ($script, $arg);
@@ -987,6 +991,18 @@ my $instructions = -f $agents ? markdown_prose(read_file($agents)) : '';
 my $begin = '<!-- beerpowers:engine entry -->';
 my $end = '<!-- /beerpowers:engine -->';
 my $extra = '';
+my $restored_entry;
+if (-f $agents && index($instructions, $begin) < 0 && !$operation) {
+    my $result = parse_json(render_json('memory-engine', {
+        documents => {$agents => decode('UTF-8', read_file($agents))},
+        check => $doctor ? JSON::PP::true : JSON::PP::false,
+        previous => $machine_plan ? $ENV{BEERPOWERS_PREVIOUS_PACKAGE} : undef,
+    }));
+    if (exists $result->{$agents}) {
+        $restored_entry = encode('UTF-8', $result->{$agents});
+        $instructions = markdown_prose($restored_entry);
+    }
+}
 if (index($instructions, $begin) < 0 && !$doctor) {
     my $other_blocks = $instructions;
     $other_blocks =~ s/^<!-- beerpowers:engine [\w-]+(?: if=[\w:.-]+)? -->\r?\n(?:(?!<!-- \/?beerpowers:engine).)*?^<!-- \/beerpowers:engine -->\r?$//msg;
@@ -999,7 +1015,7 @@ if (index($instructions, $begin) < 0 && !$doctor) {
 my $entry_replaced = 0;
 if (!$doctor && -f $agents) {
     my $before = read_file($agents);
-    my $after = $before;
+    my $after = $restored_entry // $before;
     my %retired_entry = (
         'role-packet' => 'Тимлид читает .codex/role-settings.json и применимые .codex/rules/ перед работой с продуктом. Для ролевых задач BeerPowers явно передаёт инструкции через role-packet. При смене путей подбери правила заново. Запись в память роли ограничена её каталогом .codex/agent-memory/.',
         'products' => 'Для каждого выбранного продукта команды берутся из memory/commands/<репо>.md, профиль из .codex/git-settings.json, правила роли из .codex/role-settings/<репо>.json. Выбирай продукт через BEERPOWERS_REPO.',
@@ -1063,6 +1079,36 @@ for my $rule (sort values %ignore) {
 append_lines('.gitignore', join('', @rules)) if @rules;
 # The memory index and binding identify the old guide until the tables are updated.
 replace_setup_file($memory_index, $memory_relink) if defined $memory_relink;
+unless ($operation) {
+    my %pending = map { $_->[0] => $_ } @changes;
+    my %docs;
+    my @owned = map { "memory/$_" } qw(MEMORY.md project/safety-rules.md project/glossary.md issues/known-issues.md);
+    if ($doctor) {
+        push @owned, $agents, qw(.codex/team-charter.md .codex/team-lead.md);
+        opendir my $roles_dir, "$Bin/../templates/roles" or die "templates/roles: $!\n";
+        push @owned, map { ".codex/agents/$_" } sort grep { /^[\w-]+-agent\.md$/ } readdir $roles_dir;
+        closedir $roles_dir;
+    }
+    for my $file (@owned) {
+        my $path = safe_path($file);
+        my $change = $pending{$path};
+        next unless -f $path || $change;
+        my $body = -f $path ? read_file($path) : '';
+        $body = ($change->[3] // '') eq 'replace' ? $change->[2] : $body . $change->[2] if $change;
+        $docs{$path} = decode('UTF-8', $body, FB_CROAK);
+    }
+    if (%docs) {
+        my $edits = parse_json(render_json('memory-engine', {documents => \%docs, check => $doctor ? JSON::PP::true : JSON::PP::false,
+            previous => $machine_plan ? $ENV{BEERPOWERS_PREVIOUS_PACKAGE} : undef}));
+        for my $path (sort keys %$edits) {
+            my $body = encode('UTF-8', $edits->{$path});
+            my $change = $pending{$path};
+            if ($change && !defined $change->[1]) { $change->[2] = $body }
+            elsif ($change) { @$change = ($path, read_file($path), $body, 'replace') }
+            else { replace_setup_file($path, $body) }
+        }
+    }
+}
 if (!$doctor) {
     require "$Bin/lib/memory-links-migration.pl";
     migrate_memory_links($Bin, \@changes, "$manifest->{repository}/blob/main/plugins/beerpowers");
@@ -1073,33 +1119,32 @@ if ($packet) {
     die "Choose BEERPOWERS_REPO for role-packet: @repos\n" if @repos > 1 && !length($ENV{BEERPOWERS_REPO} // '');
     role_command(dirname($Bin), 'packet', $repo, $test_inputs{$repo}{guide}, @ARGV); exit 0;
 }
+my $task_checkout;
+sub product_evidence {
+    my ($task, $product) = @_;
+    return ($task, undef) unless $task_checkout;
+    my $dir = $task_checkout->{multi} ? task_path("$task/repos/$task_checkout->{name}") : $task;
+    return ($dir, defined $task_checkout->{baseSha} ? $task_checkout : undef);
+}
 if ($review || $handover || $feature) {
     my $code = $ARGV[0] // '';
-    die "Invalid task name\n" unless $code =~ m{\A[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*\z};
-    my $file = safe_path("memory/tasks/$code/checkouts.json");
-    if (-f $file) {
-        my $records = parse_json(read_file($file))->{repos};
-        die "Invalid task projects in $file\n" unless ref($records) eq 'ARRAY' && @$records;
-        if (!length($ENV{BEERPOWERS_REPO} // '')) {
-            die "Choose BEERPOWERS_REPO for $code\n" unless @$records == 1;
-            $repo = $records->[0]{name};
-        }
-        die "Unknown project in $file\n" unless grep { $_ eq $repo } @repos;
-        my @matching = grep { ($_->{name} // '') eq $repo } @$records;
-        die "Expected one $repo checkout in $file\n" unless @matching == 1;
-        $product = $matching[0]{checkout} // '';
-        die "Unexpected checkout in $file\n" unless $product eq "projects/$repo" || $product eq "worktrees/$code/$repo";
-        safe_path($product);
-        safe_path("$product/.git");
-        my $top = git_output('-C', $product, 'rev-parse', '--show-toplevel'); chomp $top;
-        my $list = git_output('-C', "projects/$repo", 'worktree', 'list', '--porcelain', '-z');
-        die "Checkout does not belong to task $code in $repo\n"
-            unless grep { /(?:\A|\0)worktree \Q$top\E\0/ && /\0branch refs\/heads\/\Q$code\E(?:\0|\z)/ }
-                split /\0\0/, $list;
-        print "Task product: $repo\nCheckout path: $product\n";
-    } elsif (@repos > 1 && !length($ENV{BEERPOWERS_REPO} // '')) {
-        die "Choose BEERPOWERS_REPO for $code: @repos\n";
+    my $node = $ENV{BEERPOWERS_NODE} || 'node';
+    my $script = "$Bin/git-workspace.mjs";
+    if ($^O eq 'cygwin') {
+        $node = Cygwin::win_to_posix_path($node) if $node =~ /^[A-Za-z]:/;
+        $script = Cygwin::posix_to_win_path($script);
     }
+    my @selected = length($ENV{BEERPOWERS_REPO} // '') ? ($repo) : ();
+    open my $result, '-|', $node, $script, 'task-checkout', $code, @selected or die "$script: $!\n";
+    my $output = do { local $/; <$result> };
+    close $result or die "Could not select task checkout\n";
+    $task_checkout = parse_json($output);
+    $ENV{BEERPOWERS_REPO} = $repo = $task_checkout->{name};
+    $product = safe_path($task_checkout->{checkout});
+    if ($review && defined $task_checkout->{baseSha} && $task_checkout->{baseSha} ne ($ARGV[1] // '')) {
+        die "Review base differs from saved Base-SHA\n";
+    }
+    print "Task product: $repo\nCheckout path: $product\n";
 }
 if ($task || $handover || $feature) {
     require "$Bin/task-start.pl";

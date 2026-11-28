@@ -16,6 +16,12 @@ const managedSources = new Map([
   ['memory/MEMORY.md', 'codex-memory'],
 ]);
 const managedBlocks = [...managedSources.values()];
+const memorySources = new Map([
+  ['memory/MEMORY.md', ['memory-intro', 'memory-layout']],
+  ['memory/project/safety-rules.md', ['never-generic', 'confirm-generic']],
+  ['memory/issues/known-issues.md', ['issues-rules']],
+  ['memory/project/glossary.md', ['glossary-rules']],
+]);
 const git = (...args) => execFileSync('git', args, {
   encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024
 });
@@ -30,10 +36,11 @@ function file(path) {
 
 export function validateEngineTemplates() {
   const migration = file(registry);
-  for (const [template, name] of managedSources) {
+  for (const template of new Set([...managedSources.keys(), ...memorySources.keys()])) {
     const path = pkg + '/templates/' + template;
     const sections = blocks(file(path), path);
-    assert.ok(sections.has(name), 'Missing engine block: ' + name);
+    const required = [managedSources.get(template), ...(memorySources.get(template) ?? [])].filter(Boolean);
+    for (const name of required) assert.ok(sections.has(name), path + ': missing engine block ' + name);
     for (const [id, section] of sections) {
       assert.doesNotMatch(section.text, /\{\{[A-Z_]+\}\}/, path);
       assert.ok(migration.split('\n').some(line => line.includes('`' + id + '`') &&
@@ -59,6 +66,7 @@ const generators = {
   'bin/lib/charter.mjs': [[/[\s\S]+/, ['codex-team', 'codex-lead']]],
   'bin/lib/role-setup.mjs': [[/[\s\S]+/, []]],
   'bin/lib/memory-links-migration.pl': [[/[\s\S]+/, []]],
+  'bin/lib/memory-engine.mjs': [[/[\s\S]+/, [...memorySources.values()].flat()]],
   'bin/role-packet.pl': [
     [/^sub stage_six_setup \{[\s\S]*?(?=^sub role_packet \{)/m, []]
   ],
@@ -99,8 +107,7 @@ function checkMigrations(reference) {
     if (before === after) continue;
     if (path.startsWith(pkg + '/templates/')) {
       const template = path.slice((pkg + '/templates/').length);
-      const name = managedSources.get(template);
-      if (name) {
+      if (managedSources.has(template) || memorySources.has(template)) {
         const oldBlocks = blocks(before ?? '', path), newBlocks = blocks(after ?? '', path);
         const changed = [...new Set([...oldBlocks.keys(), ...newBlocks.keys()])]
           .filter(id => oldBlocks.get(id)?.text !== newBlocks.get(id)?.text);

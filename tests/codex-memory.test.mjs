@@ -7,6 +7,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { createFormServer } from './fixtures/ui-qa/server.mjs';
+import { blocks, engineBody } from '../plugins/beerpowers/bin/lib/markdown-engine.mjs';
+import { refreshMemory } from '../plugins/beerpowers/bin/lib/memory-engine.mjs';
 
 const pkg = fileURLToPath(new URL('../plugins/beerpowers/', import.meta.url));
 const template = join(pkg, 'templates/memory');
@@ -61,9 +63,11 @@ test('rendered Codex memory contains the required templates and resolves project
   for (const file of resources.filter(file => file.endsWith('.md'))) linksExist(join(root, 'memory', file));
   const index = read(join(root, 'memory/MEMORY.md'));
   assert.match(index, /^# Память команды catalog$/m);
-  const markers = [...index.matchAll(/<!-- beerpowers:engine [^\n]+ -->[\s\S]+?<!-- \/beerpowers:engine -->/g)];
-  assert.equal(markers.length, 1);
-  assert.equal(markers[0][0], read(join(template, 'MEMORY.md')).match(/<!-- beerpowers:engine codex-memory -->[\s\S]*?<!-- \/beerpowers:engine -->/)[0]);
+  const markers = blocks(index, 'memory/MEMORY.md');
+  assert.deepEqual([...markers.keys()], ['memory-intro', 'codex-memory', 'memory-layout']);
+  for (const [name, canonical] of blocks(read(join(template, 'MEMORY.md')), 'template')) {
+    assert.equal(markers.get(name).text, canonical.text);
+  }
   for (const file of resources.filter(file => file.endsWith('.md') && file !== 'MEMORY.md')) {
     assert.ok(index.includes('](' + file + ')'), 'full index covers ' + file);
   }
@@ -77,6 +81,24 @@ test('rendered Codex memory contains the required templates and resolves project
   const evidence = execFileSync(process.execPath, [join(pkg, 'bin/onboard-check.mjs'), 'onboard', 'memory/project/project-map.md'],
     { cwd: root, encoding: 'utf8' });
   assert.match(evidence, /facts=1 references=1/);
+});
+
+test('lost safety ownership is diagnosed and repaired around exact bodies without absorbing adjacent project text', () => {
+  const path = 'memory/project/safety-rules.md', doc = read(join(template, 'project/safety-rules.md'));
+  const [never, confirm] = blocks(doc, path).values();
+  const gap = '\r\n\r\nРучной абзац между запретами.  \r\n\r\n';
+  const lines = text => text.replaceAll('\n', '\r\n');
+  const raw = lines(engineBody(never)) + gap + lines(engineBody(confirm)) + gap;
+  assert.throws(() => refreshMemory(raw, doc, path, null, true), /Утрачены границы/);
+  const fixed = lines(never.text) + gap + lines(confirm.text) + gap;
+  assert.equal(refreshMemory(raw, doc, path), fixed);
+  const example = '~~~~markdown\r\n' + lines(engineBody(never)) + '\r\n~~~\r\n<!-- /beerpowers:engine -->\r\n~~~~\r\n';
+  assert.equal(refreshMemory(example + raw, doc, path), example + fixed);
+  assert.equal(refreshMemory(fixed, doc, path), fixed);
+  const changed = doc.replace('Для проверок используй', 'Для тестов используй');
+  assert.equal(refreshMemory(fixed, changed, path, doc), fixed.replace('Для проверок используй', 'Для тестов используй'));
+  assert.throws(() => refreshMemory(fixed.replace('<!-- /beerpowers:engine -->', ''), doc, path), /Ambiguous engine marker/);
+  assert.throws(() => refreshMemory(raw + lines(engineBody(never)), doc, path), /Неоднозначные границы/);
 });
 
 test('selective rendering writes nothing in the existing project or shared index', t => {

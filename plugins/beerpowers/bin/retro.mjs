@@ -311,7 +311,7 @@ function plan(codes, options, products) {
       catch { proof = {merged: null, reason: 'Fresh Git merge evidence unavailable. Keep artifacts.'}; }
       const work = git(root, ['status', '--porcelain', '--untracked-files=all', '--ignored=matching', '--', row.directory]);
       const tracked = git(root, ['ls-files', '-z', '--', row.directory]).split('\0').filter(Boolean);
-      const expected = Object.hasOwn(row.sources, 'checkouts.json') ? JSON.parse(read(row.directory + '/checkouts.json')).repos : null;
+      const expected = taskData(code).saved.repos;
       const scopeResolved = expected == null ? products.length === 1 : Array.isArray(expected) && expected.length > 0 &&
         expected.every(repo => products.some(product => product.name === repo.name));
       const distilled = journal.includes('<!-- beerpowers:distilled ' + row.evidenceId + ' -->');
