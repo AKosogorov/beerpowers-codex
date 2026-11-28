@@ -184,7 +184,7 @@ function packageChecks() {
           if (/^(?:https?:|mailto:|#)/i.test(target)) continue;
           const name = target.split('#')[0];
           if (name.startsWith(referenceNamespace + '/')) {
-            if (!references.has(name)) issues.push(`${path} → ${target}`);
+            issues.push(`${path} → ${target}: укажите кликабельный путь и поместите адрес для Read в заголовок ссылки`);
             continue;
           }
           const dest = path === pkg + '/templates/AGENTS.md' && generated.has(name)

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { readCharter } from '../plugins/beerpowers/bin/lib/role-context.mjs';
+import { blocks } from '../plugins/beerpowers/bin/lib/markdown-engine.mjs';
 import { parseFrontmatter } from '../plugins/beerpowers/bin/lib/role-metadata.mjs';
 import { refreshRole } from '../plugins/beerpowers/bin/lib/role-setup.mjs';
 import { fileURLToPath } from 'node:url';
@@ -95,8 +96,8 @@ test('migration resolves active instruction owners and pins only proven historic
   f.put(memory,index + fenced);
   f.put(report,note + fenced);
   const projectLink = '[Git задачи](../tasks/UNIT-1/git-flow.md) и `reference/git-flow.md`.';
-  const oldGuide = '`$packageRoot/reference/git-flow.md` и [раздел]($packageRoot/reference/git-flow.md#гейты).';
-  const newGuide = '`beerpowers:reference/git-flow.md` и [раздел](beerpowers:reference/git-flow.md#гейты).';
+  const oldGuide = '`$packageRoot/reference/git-flow.md` и [раздел]($packageRoot/reference/git-flow.md#qa-чеклист).';
+  const newGuide = '`beerpowers:reference/git-flow.md` и [раздел](https://github.com/AKosogorov/beerpowers-codex/blob/main/plugins/beerpowers/reference/git-flow.md#qa-чеклист "beerpowers:reference/git-flow.md#qa-чеклист").';
   f.put('.claude/reference/git-flow.md','Архивный справочник\n');
   f.put(local,'Местный файл `workspace.json`.\n' + projectLink + '\n' + oldGuide + '\n`.claude/reference/git-flow.md`\n');
   f.put('memory/project/workspace.json','{}\n');
@@ -124,7 +125,12 @@ test('migration resolves active instruction owners and pins only proven historic
 
 test('migration restores the original project name and autonomous intake from the archived charter', t => {
   const f = fixture(t);
-  f.put('.claude/team-charter.md','# Team Charter — Магазин\n\n## Intake-режим\n\n**Сами от начала до конца.** Свой текст режима.\n');
+  const source = readFileSync(join(pkg,'templates/charter/claude-source/team-charter.txt'),'utf8').replaceAll('\r\n','\n');
+  const intro = blocks(source,'team-charter').get('charter-intro').text;
+  const archive = '# Team Charter — Магазин\n\n' + intro + '\n\n## Intake-режим\n\n**Сами от начала до конца.** Свой текст режима.\n';
+  f.put('.claude/team-charter.md',archive.replace('CLAUDE.md','рукописное правило'));
+  assert.throws(() => f.setup('plan'),/Conflict team-charter \[charter-intro\]/);
+  f.put('.claude/team-charter.md',archive);
   f.setup('apply');
   const charter = f.read('.codex/team-charter.md');
   assert.match(charter,/^# Team Charter — Магазин$/m);

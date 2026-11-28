@@ -1,5 +1,4 @@
 // Переносит проектные вставки между заголовками и именованными блоками устава.
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { blocks, markupLines } from './markdown-engine.mjs';
@@ -7,8 +6,6 @@ import { isClaudeModel } from './role-metadata.mjs';
 import { referenceFiles, referenceNamespace } from './role-references.mjs';
 
 const asset = name => readFileSync(new URL('../../templates/charter/' + name, import.meta.url), 'utf8').replaceAll('\r\n','\n');
-const previous = JSON.parse(asset('previous.json'));
-const hash = value => createHash('sha256').update(value).digest('hex');
 const quote = value => '\x60' + value + '\x60';
 const intakeDescriptions = {
   plan:'**План вместе, дальше сами.** Архитектор готовит design brief для задачи крупнее мелкой правки. Пользователь утверждает план. Реализация, тесты и ревью идут до готового MR с остановкой на необратимой развилке.',
@@ -59,13 +56,18 @@ function upgradePmLink(text) {
 }
 
 function adaptProse(text) {
-  const references = text.includes('.claude/reference/') ? referenceFiles() : null;
+  const references = text.includes('reference/') ? referenceFiles() : null;
   const replacements = line => line.replaceAll('/beerpowers:', '$beerpowers ')
     .replace(/beerpowers:(brainstorm|debug-loop|economy|grill|minimal-diff|page-screenshot|prototype|summarizing-mr-links|tracker-task)\b/g,'beerpowers-codex:$1')
     .replaceAll('\x60front\x60','\x60frontend\x60').replaceAll('\x60db\x60','\x60database\x60')
     .replace(/(?<![\w./-])\.claude\/reference\/([\w/-]+\.md)(?=[\s\x60#),;]|$)/g, (original, name) => {
       const label = referenceNamespace + '/' + name;
       return references.has(label) ? label : original;
+    })
+    .replace(/\]\((beerpowers:reference\/([^\s#)]+\.md)(#[^\s)]*)?)(?:\s+"[^"]*")?\)/g, (original, label, name, fragment = '') => {
+      if (!references.has(referenceNamespace + '/' + name)) return original;
+      const {repository} = JSON.parse(readFileSync(new URL('../../.codex-plugin/plugin.json', import.meta.url), 'utf8'));
+      return '](' + repository + '/blob/main/plugins/beerpowers/reference/' + name + fragment + ' "' + label + '")';
     })
     .replaceAll('.claude/bin/', '<пакет>/bin/').replace(/\.claude\/(?!reference\/)/g, '.codex/');
   for (const line of [...markupLines(text)].reverse()) {
@@ -145,7 +147,6 @@ function recover(template, source, file, rosters, allowed) {
   // Проектный engine может принадлежать другому расширению. Он остаётся частью
   // проектной вставки, пока в шаблоне пакета нет блока с таким именем.
   const entries = anchors(source, file).filter(row => !row.name || expected.has(row.name));
-  const legacyLayout = !entries.some(entry => entry.key === 'charter-intro' || entry.key === 'lead-intro');
   const saved = {}, extra = new Map();
   function put(key,value) {
     if (value) saved[key] = [saved[key],value].filter(Boolean).join('\n\n');
@@ -153,16 +154,11 @@ function recover(template, source, file, rosters, allowed) {
   const preamble = source.slice(0, entries[0]?.start ?? source.length);
   for (const [i,row] of entries.entries()) {
     const canonical = expected.get(row.key);
-    if (row.name && canonical && row.text !== canonical.text &&
-        !previous[file].blocks[row.key]?.includes(hash(row.text)) && allowed?.get(row.key)?.text !== row.text) {
+    if (row.name && canonical && row.text !== canonical.text && allowed?.get(row.key)?.text !== row.text) {
       throw Error('Conflict ' + file + ' [' + row.key + ']: изменён управляемый блок');
     }
     let content = source.slice(row.end,entries[i+1]?.start ?? source.length).trim();
     if (row.key === 'title') content = content.replace(/^(?:\*\*Версия charter:\*\* 2\.0 · \*\*generated-by: beerpowers v[\d.]+ · mode: plugin-linked\*\*|<!-- generated-by: beerpowers-codex v[\d.]+ · mode: plugin-linked -->)$/gm,'').trim();
-    // Удаляются только известные печатные абзацы сокращённых версий шаблона.
-    if (legacyLayout) {
-      content = content.split(/\n[ \t]*\n/).filter(p => !previous[file].paragraphs.includes(hash(p))).join('\n\n').trim();
-    }
     if (row.key === '## Команда разработки') { put('DEV_SECTION', row.key + '\n\n' + content); continue; }
     if (row.key === '## PM-конвейер') { put('PM_PIPELINE', adaptProse(row.key + '\n\n' + content)); continue; }
     if (!content) continue;
@@ -200,7 +196,9 @@ function insertExtras(text, file, extra) {
 
 export function renderCharter({file,template,slots,overrides={},source='',rosters={},guides={},ui=false,intake='',priorBlocks}) {
   const active = new Set(Object.values(rosters).flat());
-  const {saved,extra,preamble} = recover(template, source.replaceAll('\r\n','\n'), file, rosters, priorBlocks);
+  // При первом setup source приходит из .claude. Обновление Codex передаёт свои priorBlocks.
+  const sourceBlocks = priorBlocks ?? (source ? blocks(asset('claude-source/' + file + '.txt'), file) : undefined);
+  const {saved,extra,preamble} = recover(template, source.replaceAll('\r\n','\n'), file, rosters, sourceBlocks);
   const fields = {...slots,...saved,...overrides};
   if (file === 'team-charter') {
     fields.MODELS = models(fields.MODELS ?? '');
@@ -269,8 +267,7 @@ export function refreshCharter({file,text,template,prior,ui,version,rosters={},g
     if (found) {
       const current = plain(found.text);
       if (enabled && canonical.text === current) continue;
-      if (current !== canonical.text && historic.get(name)?.text !== current &&
-          !previous[file].blocks[name]?.includes(hash(current))) throw Error('Conflict ' + file + ' [' + name + ']: изменён управляемый блок');
+      if (current !== canonical.text && historic.get(name)?.text !== current) throw Error('Conflict ' + file + ' [' + name + ']: изменён управляемый блок');
       const after = text.slice(found.end);
       const suffix = !enabled && after.startsWith(eol + eol) ? after.slice(eol.length * 2) : after;
       text = text.slice(0,found.start) + (enabled ? line(canonical.text) : '') + suffix;

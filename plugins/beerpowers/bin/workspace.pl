@@ -1065,7 +1065,7 @@ append_lines('.gitignore', join('', @rules)) if @rules;
 replace_setup_file($memory_index, $memory_relink) if defined $memory_relink;
 if (!$doctor) {
     require "$Bin/lib/memory-links-migration.pl";
-    migrate_memory_links($Bin, \@changes);
+    migrate_memory_links($Bin, \@changes, "$manifest->{repository}/blob/main/plugins/beerpowers");
 }
 replace_setup_file($workspace_file, $json->encode($saved_workspace)) if $guide_binding_changed;
 die join("\n", @errors) . "\n" if @errors;

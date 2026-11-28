@@ -126,9 +126,10 @@ export function pathRules(root, repo, paths = []) {
 function addReading(root, row, add) {
   const cell = row?.['Read on spawn'] ?? '';
   // Условия в свободном тексте остаются у тимлида. Все названные документы доступны в пакете.
-  const references = /(?:`([^`]+)`|\[[^\]]*\]\(([^)]+)\)|((?:beerpowers:reference\/|memory\/|\.codex\/(?:agents\/|roles\/))[^\s`,;()]+?\.md\b))/gu;
+  const references = /(?:`([^`]+)`|\[[^\]]*\]\(([^)]+?)(?:[ \t]+"([^"]+)")?\)|((?:beerpowers:reference\/|memory\/|\.codex\/(?:agents\/|roles\/))[^\s`,;()]+?\.md\b))/gu;
   for (const match of cell.matchAll(references)) {
-    const path = match[1] ?? match[2] ?? match[3];
+    const [, inline, href, title, bare] = match;
+    const path = title?.startsWith(referenceNamespace + '/') ? title : inline ?? href ?? bare;
     const after = cell.slice(match.index + match[0].length);
     const optional = /^\s*\((?:если создан[аоы]?|при наличии)\)/i.test(after);
     if (path.startsWith(referenceNamespace + '/')) {

@@ -65,7 +65,8 @@ test('в архивном уставе адрес пакета меняется 
   const example = '~~~md\n' + shipped + '\n~~~';
   const source = '# Team Charter — Архив\n\n## Назначение\n\n' + [shipped, local, example].join('\n\n');
   const result = renderCharter({...settings,file,template,source});
-  assert.ok(result.includes('[Git](beerpowers:reference/git-flow.md#qa-чеклист)\n\n' + local + '\n\n' + example));
+  const link = '[Git](https://github.com/AKosogorov/beerpowers-codex/blob/main/plugins/beerpowers/reference/git-flow.md#qa-чеклист "beerpowers:reference/git-flow.md#qa-чеклист")';
+  assert.ok(result.includes(link + '\n\n' + local + '\n\n' + example));
   const oldPm = 'Условия переходов и handoff — в reference/feature-pipeline.md#артефакты-и-статусы установленного пакета.';
   const text = result + '\n' + oldPm + '\n\n~~~md\n' + oldPm + '\n~~~\n';
   const updated = refreshCharter({file,template,text,ui:true});

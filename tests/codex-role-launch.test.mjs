@@ -141,6 +141,11 @@ test('beerpowers:reference читает доставленные с пакето
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.stdout.includes('FILE ' + label + ' sha256='));
   assert.match(result.stdout, /sha256=[0-9a-f]{64}\nДокумент поставки/);
+  withReading('[Правила](reference/ui/new-guide.md#проверки "' + label + '#проверки"), [Память](memory/project/tester.md "Проект")');
+  const dual = packet();
+  assert.equal(dual.status, 0, dual.stderr);
+  assert.ok(dual.stdout.includes('FILE ' + label + ' sha256='));
+  assert.ok(dual.stdout.includes('FILE memory/project/tester.md sha256='));
   withReading(label + ', `' + label + '`');
   assert.equal(packet().stdout.split('FILE ' + label + ' sha256=').length, 2);
   withReading('`' + ns + '/missing.md`');
