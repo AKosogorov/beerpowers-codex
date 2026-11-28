@@ -91,7 +91,7 @@ if (import.meta.main) {
           ". Аргументы по выданной операции: Read 'путь', Grep 'путь' 'текст', Glob 'каталог' 'маска'.");
       }
       if (fields.tools.includes('Read')) {
-        console.log("Справка плагина: Read 'beerpowers:reference' перечисляет документы. В Markdown-ссылке адрес для Read указан в кавычках после пути: 'beerpowers:reference/<файл>.md'.");
+        console.log("Справка плагина: Read 'beerpowers:reference' перечисляет документы. При переходе передай в Read адрес beerpowers:reference/… из выдачи или полную исходную Markdown-ссылку одним аргументом.");
       }
       if (fields.tools.includes('WebSearch') || fields.tools.includes('WebFetch')) {
         console.log('Для web__run применяй search_query при WebSearch и open при WebFetch.');

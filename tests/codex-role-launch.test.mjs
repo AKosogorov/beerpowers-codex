@@ -131,11 +131,33 @@ test('beerpowers:reference читает доставленные с пакето
   assert.equal(read(label).stdout, 'Документ поставки\n');
   assert.equal(read(label + '#проверки').stdout, 'Документ поставки\n');
   assert.equal(read('reference/ui/new-guide.md').stdout, 'Документ проекта');
+  const doc = 'memory/обычная заметка.md', href = 'reference/ui/new-guide.md';
+  const marked = '[Новый справочник](' + href + ' "' + label + '#проверки")';
+  const missingLink = '[Другой](' + href + ' "' + ns + '/missing.md")';
+  const workspaceLink = '[Проект](' + href + ')';
+  const examples = ['~~~md', marked, '~~~', '`' + marked + '`', '<!-- ' + marked + ' -->'].join('\r\n');
+  const note = [marked, missingLink, workspaceLink, examples].join('\r\n');
+  put(doc, note);
+  const view = read(doc);
+  assert.equal(view.status, 0, view.stderr);
+  assert.equal(view.stdout, ['[Новый справочник](' + label + '#проверки)', '[Другой](' + ns + '/missing.md)', workspaceLink, examples].join('\r\n'));
+  assert.equal(readFileSync(join(root,doc),'utf8'), note);
+  assert.equal(read(marked).stdout, 'Документ поставки\n');
+  assert.equal(read('[Новый справочник](' + label + '#проверки)').stdout, 'Документ поставки\n');
+  const standalone = spawnSync(process.execPath, [join(installed,'bin/role-files.mjs'), 'Read', marked], {cwd:installed, env, encoding:'utf8'});
+  assert.equal(standalone.status, 0, standalone.stderr);
+  assert.equal(standalone.stdout, 'Документ поставки\n');
+  assert.notEqual(read(missingLink).status, 0);
   for (const name of ['missing.md', 'internal.txt', 'external/MEMORY.md', '../bin/role-files.mjs']) {
     assert.notEqual(read(ns + '/' + name).status, 0, name);
   }
   const packet = () => cli('role-launch.mjs', ['packet','demo','memory/commands/demo.md','tester']);
   const withReading = list => put('.codex/team-charter.md', charter.replace('`memory/project/tester.md`', list));
+  put('memory/commands/demo.md', note);
+  const ordinary = packet();
+  assert.equal(ordinary.status, 0, ordinary.stderr);
+  assert.ok(ordinary.stdout.includes(view.stdout));
+  assert.ok(!ordinary.stdout.includes('FILE ' + ns + '/') && !ordinary.stdout.includes('Документ поставки'));
   withReading('[Правила](' + label + '#проверки), `' + ns + '/optional.md` (при наличии)');
   const result = packet();
   assert.equal(result.status, 0, result.stderr);
@@ -189,6 +211,7 @@ test('Привязанный ID передаёт YAML tools в зарегист�
   for (const [args, expected] of [
     ["Read 'memory/project/architect.md'", /read:architect/],
     ["Read 'beerpowers:reference/git-flow.md#qa-чеклист'", /QA-чеклист/],
+    [`Read '[Проверки Node](../reference/node-runtime.md "beerpowers:reference/node-runtime.md")'`, /Node/],
     ["Grep 'memory/project' 'read:database'", /memory\/project\/database.md:1:read:database/],
     ["Glob 'memory' 'project/*.md'", /memory\/project\/architect.md/],
   ]) {

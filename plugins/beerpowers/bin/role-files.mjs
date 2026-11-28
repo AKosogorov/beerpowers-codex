@@ -2,10 +2,10 @@
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { matchesGlob } from 'node:path';
 import { findRoot, workspacePath } from './lib/ui-workspace.mjs';
-import { referenceFile, referenceFiles, referenceNamespace } from './lib/role-references.mjs';
+import { agentMarkdown, referenceFile, referenceFiles, referenceNamespace, selectedReference } from './lib/role-references.mjs';
 import { showHelp } from './lib/cli-help.mjs';
 
-showHelp('role-files.mjs Read FILE | Read beerpowers:reference[/FILE.md] | Grep FILE_OR_DIRECTORY TEXT | Glob DIRECTORY PATTERN');
+showHelp('role-files.mjs Read FILE | Read beerpowers:reference[/FILE.md] | Read MARKDOWN_REFERENCE_LINK | Grep FILE_OR_DIRECTORY TEXT | Glob DIRECTORY PATTERN');
 const [operation, target, query, ...extra] = process.argv.slice(2);
 const root = findRoot();
 const ignoredDirectories = new Set(['node_modules','vendor']);
@@ -39,9 +39,10 @@ try {
   if (operation === 'Read' && target === referenceNamespace) {
     for (const label of [...referenceFiles().keys()].sort()) console.log(label);
   } else if (operation === 'Read') {
-    const text = readText(target);
+    const file = selectedReference(target);
+    const text = readText(file);
     if (text === null) throw Error('Ожидается текстовый файл');
-    process.stdout.write(text);
+    process.stdout.write(/\.md$/i.test(file.split('#', 1)[0]) ? agentMarkdown(text) : text);
   } else {
     for (const file of regularFiles(target)) {
       if (operation === 'Glob') {
