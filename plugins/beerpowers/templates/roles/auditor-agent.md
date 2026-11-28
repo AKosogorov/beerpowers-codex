@@ -166,7 +166,7 @@ skills: [{{ROLE_SKILLS}}]
    поэтому по шкале charter каждый finding — рекомендация `R<N>` с пунктом `tech-debt/`,
    гипотеза и наблюдение — `N<N>`. Метку ставь рядом с приоритетом.
 4. На каждый finding — конкретное предложение и роль-исполнитель
-   (`backend` / `db` / `front` / `devops`).
+   (`backend` / `database` / `frontend` / `devops`).
 <!-- /beerpowers:engine -->
 
 ## Формат отчёта

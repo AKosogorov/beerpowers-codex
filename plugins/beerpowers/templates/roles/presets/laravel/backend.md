@@ -31,7 +31,7 @@
 ## Слот `PROCESS_NOTES`
 
 Слои шага 2: где Application Service, где сервис модуля, где Infrastructure. Публичный
-контракт API шага 5 — swagger-аннотации (l5-swagger): у `front` клиент генерируется из этой
+контракт API шага 5 — swagger-аннотации (l5-swagger): у `frontend` клиент генерируется из этой
 схемы.
 
 ## Слот `GATE_NOTES`

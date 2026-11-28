@@ -10,10 +10,8 @@ import { loadWorkspace as loadTestSettings, SAFE_NAME } from './lib/test-workspa
 import { techDebtIndex } from './lib/tech-debt-index.mjs';
 import { workspaceLinks } from './lib/workspace-links.mjs';
 
-const roles = readdirSync(new URL('../templates/roles/', import.meta.url))
-  .filter(file => file.endsWith('-agent.md')).map(file => basename(file, '-agent.md')).map(role => role === 'testing' ? 'tester' : role);
-const stacks = readdirSync(new URL('../templates/roles/presets/', import.meta.url), {withFileTypes:true})
-  .filter(entry => entry.isDirectory()).map(entry => entry.name);
+import { verifyRoles } from './lib/role-context.mjs';
+
 const flags = ['guard-push', 'guard-kill', 'guard-stdin-code', 'guard-comments', 'guard-commit-split', 'guard-approval-link'];
 const taskFiles = new Set(['design-brief.md', 'plan-delta.md', 'test-cases.md', 'bug-log.md', 'review-report.md',
   'handover.md', 'preflight.md', 'git-flow.md', 'audit-report.md', 'checkouts.json', 'feature-state.json',
@@ -159,34 +157,10 @@ function inspect(root) {
     return issues(problems);
   }
 
-  function roleSettings() {
-    const productsFound = products();
-    const evidence = Object.create(null);
-    for (const repo of productsFound) {
-      const scoped = '.codex/role-settings/' + repo + '.json';
-      const source = productsFound.length > 1 || stat(scoped) ? scoped : '.codex/role-settings.json';
-      const cfg = config(source);
-      const validList = (list, values) => Array.isArray(list) && new Set(list).size === list.length &&
-        list.every(item => values.includes(item));
-      if (('stacks' in cfg && !validList(cfg.stacks, stacks)) || !isObject(cfg.rules) ||
-          ('team' in cfg && (!validList(cfg.team, [...roles, 'implementer']) || !cfg.team.length))) throw Error('Неверная схема ' + source);
-      for (const [name, dirs] of Object.entries(cfg.rules)) {
-        const file = '.codex/rules/' + name + '.md';
-        if (!/^[A-Za-z0-9_-]+$/.test(name) || !Array.isArray(dirs) || dirs.some(dir => typeof dir !== 'string' ||
-            (dir !== '.' && (/[\\:*\x00-\x1f]/.test(dir) || dir.split('/').some(part => !part || part === '.' || part === '..')))) ||
-            !stat(file)?.isFile() || !text(file).trim()) throw Error('Неверное правило ' + file + ' в ' + source);
-      }
-      const selected = new Set(cfg.team ?? roles);
-      const briefs = [...charter, ...[...selected].map(role => {
-        const agent = '.codex/agents/' + (role === 'tester' ? 'testing' : role) + '-agent.md';
-        return stat(agent) ? agent : '.codex/roles/' + role + '.md';
-      })];
-      for (const file of briefs) {
-        if (!stat(file)?.isFile() || !text(file).trim()) throw Error('Отсутствует или пуст файл ' + file);
-      }
-      evidence[repo] = {source, ...(cfg.stacks === undefined ? {} : {stacks:cfg.stacks}), rules:cfg.rules};
-    }
-    if (!productsFound.length) throw Error('Каталоги проектов не найдены');
+  function roleBriefs() {
+    const repos = products();
+    if (!repos.length) throw Error('Каталоги проектов не найдены');
+    const evidence = verifyRoles(root, repos);
     return row('pass', evidence);
   }
 
@@ -204,9 +178,9 @@ function inspect(root) {
   }
 
   function sharedSettings() {
-    const names = ['AGENTS.md', ...charter, index, '.codex/workspace.json', '.codex/git-settings.json', '.codex/role-settings.json', '.codex/barriers.json',
+    const names = ['AGENTS.md', ...charter, index, '.codex/workspace.json', '.codex/git-settings.json', '.codex/barriers.json',
       '.codex/config.toml', '.codex/rules/beerpowers-safety.rules',
-      '.codex/quality-gates.txt', ...products().map(repo => '.codex/role-settings/' + repo + '.json')];
+      '.codex/quality-gates.txt', ...markdown('.codex/agents'), ...markdown('.codex/rules')];
     const matches = ignored(names);
     const tracked = new Set(git(root, ['ls-files', '-z', '--', ...names]).split('\0'));
     const problems = files(names).filter(name => matches.has(name) && !tracked.has(name))
@@ -397,7 +371,7 @@ function inspect(root) {
       ...markdown('.codex/rules'), ...memory()].flatMap(file => prose(text(file)).flatMap((line, i) =>
         [...line.matchAll(/\{\{[A-Z0-9_]+\}\}/g)].map(match => `${file}:${i + 1}: ${match[0]}`)))),
     'task-artifacts': taskArtifacts,
-    'role-settings': roleSettings,
+    'role-briefs': roleBriefs,
     'tech-debt-index': () => {
       const evidence = techDebtIndex(root);
       const action = evidence.mode === 'manual' ? 'Добавь ссылки на перечисленные пункты.'
@@ -431,7 +405,7 @@ const checks = [
   ['memory-links', 'Ссылки в памяти и проектных инструкциях', 'Исправь ссылки в указанных файлах.'],
   ['template-slots', 'Подстановка шаблонов в уставе, ролях, правилах и памяти', 'Заполни указанные слоты.'],
   ['task-artifacts', 'Состав каталогов задач', 'Сверь пути с допустимыми артефактами задачи.'],
-  ['role-settings', 'Брифы, выбор команды, стеки и правила по путям', 'Проверь .codex/role-settings.json, брифы и проектные правила.'],
+  ['role-briefs', 'Состав команды, YAML брифов и правила по путям', 'Проверь таблицу состава в уставе, YAML полей роли и paths правил.'],
   ['tech-debt-index', 'Актуальность индекса техдолга', 'Проверь пункты и границы блока в memory/tech-debt/tech-debt.md.'],
   ['role-memory', 'Формат каталогов памяти ролей', 'Оставь MEMORY.md и feedback_*.md в каталогах ролей.'],
   ['instruction-duplicates', 'Повтор разделов и вступлений в инструкциях', 'Объедини повторяющиеся разделы, сохрани проектные уточнения.'],

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { loadWorkspace, workspacePath } from './lib/ui-workspace.mjs';
 import { workspaceCheck } from './lib/update-setup.mjs';
 import { findChrome } from './lib/chrome.mjs';
+import { readCharter, readRole, roleSkills } from './lib/role-context.mjs';
 import { checkWorkspace } from './workspace-check.mjs';
 import { loadWorkspace as loadTestSettings } from './lib/test-workspace.mjs';
 
@@ -129,10 +130,8 @@ function inspect() {
     const products = readdirSync(workspacePath(root, 'projects'), {withFileTypes:true})
       .filter(item => item.isDirectory() && existsSync(workspacePath(root, `projects/${item.name}/.git`)));
     const assigned = products.flatMap(({name}) => {
-      const scoped = `.codex/role-settings/${name}.json`;
-      const settings = config(existsSync(workspacePath(root, scoped)) ? scoped : '.codex/role-settings.json');
-      return Object.entries(settings.skills ?? {}).flatMap(([role, skills]) =>
-        skills.map(skill => ({product:name, role, skill})));
+      return [...readCharter(root, name).team.keys(), 'team-lead'].flatMap(role =>
+        roleSkills(readRole(root, role).fields, name).map(skill => ({product:name, role, skill})));
     });
     if (!assigned.length) return row('pass', []);
     const inventory = process.env.BEERPOWERS_SESSION_SKILLS_JSON;
@@ -140,7 +139,7 @@ function inspect() {
     const available = JSON.parse(inventory);
     if (!Array.isArray(available) || available.some(name => typeof name !== 'string')) throw Error('Expected a session skill inventory array');
     const missing = assigned.filter(({skill}) => !available.includes(skill));
-    return missing.length ? row('warn', missing, 'Роли работают по базовому брифу. Проверь подключение перечисленных навыков.')
+    return missing.length ? row('warn', missing, 'Подключи перечисленные навыки или явно согласуй пропуск для конкретного запуска через --without-skill.')
       : row('pass', assigned);
   });
   checks.push({id:'usage', ...row('unavailable', {tokens:null, cost:null},

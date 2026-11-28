@@ -51,7 +51,6 @@ git_ok('-C', $product, 'add', '.');
 my $legacy_agent = "<!-- beerpowers:engine entry -->\r\n(.codex/team-charter.md) (.codex/team-lead.md)\r\n<!-- /beerpowers:engine -->\r\nmanual";
 my %legacy = (
     '.codex/workspace.json' => '{"beerpowers":"0.5.0","schemaVersion":1}',
-    '.codex/team-charter.md' => "charter with manual additions\n",
     '.codex/roles/reviewer.md' => "custom reviewer scope\n",
     'memory/MEMORY.md' => "legacy index\n",
     '.codex/agent-memory/reviewer/MEMORY.md' => "manual feedback index\n",
@@ -67,10 +66,8 @@ ok(!-e '.codex/role-settings.json', 'plan read only');
 is((run('apply'))[0], 0, 'upgrade fills missing 0.6 files');
 is(bytes($_), $legacy{$_}, "preserves $_") for sort keys %legacy;
 is(bytes('AGENTS.md'), $legacy_agent, 'short entry preserves manual bytes');
-my $cfg = decode_json(bytes('.codex/role-settings.json'));
+ok(!-e '.codex/role-settings.json', 'setup does not generate a second role configuration');
 like(bytes('.codex/quality-gates.txt'),qr{\*/projects/[^/]+/\*\|\*/worktrees/\*/[^/]+/\* Проверка проекта: git diff --check}, 'one generated gate covers both checkout layouts');
-ok(!exists $cfg->{stacks}, 'stack discovery has no duplicate JSON field');
-is_deeply($cfg->{rules}, {}, 'framework detection does not invent domain rules');
 is_deeply([glob('.codex/rules/*.md')], [], 'setup ships no generic path rules');
 my %picked = (
     policy => {paths => ['php/app'], text => "# Policy\n\nOnly the active tenant may change a catalog entry."},
@@ -89,10 +86,25 @@ my %picked = (
     is((run('apply'))[0], 0, 'setup saves project rules and their actual paths');
     like((run('apply'))[1], qr/^No changes\.$/m, 'same path rule input is idempotent');
 }
-$cfg = decode_json(bytes('.codex/role-settings.json'));
-is_deeply($cfg->{rules}, {map { $_ => $picked{$_}{paths} } keys %picked}, 'only approved paths are bound');
+for my $id (sort keys %picked) {
+    my $text = bytes(".codex/rules/$id.md");
+    like($text, qr/\A---\r?\npaths:/, 'rule owns path metadata');
+    like($text, qr/\Q$picked{$id}{paths}[0]\E/, 'rule contains the approved path');
+}
 put('memory/project/domain-invariants.md', "Domain fact from project owner.\n");
 my @roles = qw(architect auditor backend database devops explorer frontend product reviewer tester);
+my %practices = (architect => [qw(brainstorm grill prototype)], backend=>['debug-loop'],
+    product=>[qw(brainstorm grill prototype tracker-task)], tester=>['page-screenshot'], reviewer=>['summarizing-mr-links']);
+# Distinct rows exercise the charter as the owner of Read on spawn and mandatory practices.
+my $table = "| Роль | Проекты | Read on spawn | Mandatory practices |\n|---|---|---|---|\n";
+for my $role (@roles) {
+    my $read = $role eq 'explorer' ? 'От тимлида' : '`memory/project/domain-invariants.md`';
+    my $skills = join(', ', map { "beerpowers:$_" } ('minimal-diff', @{$practices{$role} // []}));
+    $table .= "| `$role` | demo | $read | $skills |\n";
+}
+my $charter = bytes('.codex/team-charter.md');
+$charter =~ s/(^## Состав\r?\n(?:(?!^\|)[\s\S])*?)(?:^\|[^\n]*\n)+/$1$table/m or die "Missing roster";
+put('.codex/team-charter.md', $charter);
 for my $role (@roles, 'team-lead') {
     my ($rc, $out) = run('role-packet', $role, 'php/database/migrations/create.php');
     is($rc, 0, "role packet $role");
@@ -140,18 +152,15 @@ unlike($unrelated, qr/^FILE \.codex\/rules\//m, 'prefix boundary prevents app vs
 unlike($unrelated, qr/feedback_scope\.md/, 'other role memory excluded');
 ok((run('role-packet', 'reviewer', '../outside'))[0], 'rejects ambiguous path traversal');
 ok((run('role-packet', '../outside'))[0], 'rejects unknown role');
-$cfg->{stacks} = ['nuxt'];
-$cfg->{rules}{local} = ['ui'];
-put('.codex/rules/local.md', "manual project obligation\n");
-put('.codex/role-settings.json', encode_json($cfg));
+my $local = "---\npaths: [projects/demo/ui]\n---\nmanual project obligation\n";
+put('.codex/rules/local.md', $local);
 ($rc, $body) = run('role-packet', 'reviewer');
-like($body, qr/manual project obligation/, 'unknown file scope includes configured custom rules');
-unlike($body, qr/^FILE \.codex\/roles\/presets\/laravel/m, 'disabled stack excluded');
+like($body, qr/manual project obligation/, 'unknown file scope includes applicable project rules');
 is((run('apply'))[0], 0, 'preserves custom settings on repeat');
-is(decode_json(bytes('.codex/role-settings.json'))->{stacks}[0], 'nuxt', 'manual preference retained');
-unlink '.codex/rules/local.md' or die $!;
-ok((run('doctor'))[0], 'doctor rejects missing referenced custom rule');
-put('.codex/rules/local.md', "manual project obligation\n");
+is(bytes('.codex/rules/local.md'), $local, 'manual path binding retained');
+put('.codex/rules/local.md', "---\npaths: [../outside]\n---\nbad\n");
+ok((run('role-packet', 'reviewer'))[0], 'packet rejects traversal in paths');
+put('.codex/rules/local.md', $local);
 my $second = 'projects/other';
 make_path($second);
 git_ok('-C', $second, 'init', '-qb', 'main');

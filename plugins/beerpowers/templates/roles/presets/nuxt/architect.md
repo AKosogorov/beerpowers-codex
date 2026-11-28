@@ -6,7 +6,7 @@
 
 ## Слот `LAYER_CANON`
 
-   - Клиент → composables + stores Pinia, запросы через сгенерированный клиент API (`front`).
+   - Клиент → composables + stores Pinia, запросы через сгенерированный клиент API (`frontend`).
 
 ## Слот `REVIEW_SMELLS`
 

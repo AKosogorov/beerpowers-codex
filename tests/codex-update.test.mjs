@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -135,12 +135,14 @@ test('update drops only exact legacy rule bindings and preserves rule files and 
   const plan = ws.plan();
   assert.equal(plan.changes.some(change => change.path === settings), true);
   assert.equal(JSON.parse(ws.read(settings)).rules.backend[0], 'app');
-  assert.equal(plan.changes.some(change => change.path === backend || change.path === frontend), false);
+  assert.equal(plan.changes.some(change => change.path === backend), false);
+  assert.equal(plan.changes.some(change => change.path === frontend), true);
   ws.apply(plan.planId);
-  assert.equal(Object.hasOwn(JSON.parse(ws.read(settings)).rules, 'backend'), false);
-  assert.deepEqual(JSON.parse(ws.read(settings)).rules.frontend, ['app', 'components', 'composables', 'layouts', 'pages', 'plugins']);
+  assert.equal(existsSync(join(ws.root, settings)), false);
+  assert.deepEqual(JSON.parse(ws.read(frontend).split(/\r?\n/)[1].slice('paths: '.length)),
+    ['app', 'components', 'composables', 'layouts', 'pages', 'plugins'].map(dir => 'projects/catalog/' + dir));
   assert.equal(ws.read(backend), oldBackend.replaceAll('\n', '\r\n'));
-  assert.equal(ws.read(frontend), handEdited);
+  assert.ok(ws.read(frontend).endsWith(handEdited));
   assert.equal(ws.plan().changes.some(change => change.path === settings), false);
 });
 
@@ -357,7 +359,8 @@ test('a verified previous package replaces the old engine block while preserving
   const newTeamBlock = readFileSync(join(packageRoot, 'templates/charter/team-charter.md'), 'utf8')
     .match(/<!-- beerpowers:engine codex-team -->[\s\S]*?<!-- \/beerpowers:engine -->/)[0].replace(/\r?\n/g, '\r\n');
   const newStamp = oldStamp.replace(' v0.5.0 ', ' v' + targetVersion + ' ');
-  assert.equal(ws.read(charter), '\uFEFF' + newStamp + '\r\n' + manualCharter + newTeamBlock + '\r\n' + unknownBlock);
+  assert.ok(ws.read(charter).startsWith('\uFEFF' + newStamp + '\r\n' + manualCharter + newTeamBlock + '\r\n' + unknownBlock));
+  assert.match(ws.read(charter), /## Состав\r\n\r\n\| Роль \| Проекты \| Read on spawn \|/);
   const newMemoryBlock = readFileSync(join(packageRoot, 'templates/memory/MEMORY.md'), 'utf8')
     .match(/<!-- beerpowers:engine codex-memory -->[\s\S]*?<!-- \/beerpowers:engine -->/)[0].replace(/\r?\n/g, '\r\n');
   assert.equal(ws.read('memory/MEMORY.md'), memoryIntro + newMemoryBlock + memoryTail);

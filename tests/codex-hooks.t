@@ -266,6 +266,17 @@ put($cfg,'{}');
 put("$ws/.codex/quality-gates.txt","# ordered\n*/migrations/* Migration gate\n*.php PHP gate\n");
 my $quality = hook('apply_patch',patch("*** Add File: migrations/new.php\n+x\n*** Add File: app.php\n+x"),'PostToolUse');
 like($quality->{additionalContext},qr/Migration gate.*PHP gate/s,'all changed patch paths receive first matching quality instruction');
+my $post_matcher = $registration->{PostToolUse}[0]{matcher};
+like('functions.exec', qr/$post_matcher/, 'PostToolUse subscribes to Code mode');
+for my $kind (qw(PreToolUse PostToolUse)) {
+    my $value = $kind eq 'PreToolUse' ? $bad : patch("*** Add File: migrations/item.php\n+x");
+    my $code = 'text(await tools.apply_patch(' . Encode::decode('UTF-8',$json->encode($value)) . '))';
+    my $result = run_event($kind, tool_name => 'functions.exec', tool_input => {code => $code})->{hookSpecificOutput};
+    if ($kind eq 'PreToolUse') { denied($result, 'guard-agent-memory', 'nested patch for unbound team lead'); }
+    else { like($result->{additionalContext}, qr/Migration gate/, 'nested patch triggers quality reminder after the edit'); }
+    my $unknown = run_event($kind, tool_name => 'functions.exec', tool_input => {code => $code . '; text(1)'})->{hookSpecificOutput};
+    like($unknown->{additionalContext}//'', qr/advisory/, "$kind opaque program retains advisory");
+}
 is_deeply(hook('apply_patch',patch("*** Add File: new.js\n+x"),'PostToolUse'),{},'unmatched quality mask');
 put("$ws/.codex/quality-gates.txt","*.vue|*.ts Combined\n*.vue Later\n");
 for my $file ('projects/web/src/form.vue','worktrees/T/web/form.ts') {
