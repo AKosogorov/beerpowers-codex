@@ -96,7 +96,10 @@ for my $mask (0..7) {
     local @ENV{qw(BEERPOWERS_REPLY_BLOCKING_ASKS BEERPOWERS_REPLY_FILE_LINKS BEERPOWERS_REPLY_USER_SHELL)};
     assert_rules('SessionStart',7);
 }
-is_deeply(run_event('SubagentStart',agent_type=>'tester'),{},'no global reply rules on SubagentStart');
+for my $kind (qw(SessionStart SubagentStart)) {
+    like(run_event($kind)->{hookSpecificOutput}{additionalContext}, qr{bin[/\\]role-files\.mjs.*установленного пакета}s, "$kind delivers installed reader outside a workspace");
+}
+assert_rules('SubagentStart',0);
 is_deeply(run_event('SessionStart',agent_id=>'worker'),{},'subagent-marked start skips global rules');
 allowed(shell('git push origin main'),'no charter skips project guard');
 put("$ws/AGENTS.md","Original\n");

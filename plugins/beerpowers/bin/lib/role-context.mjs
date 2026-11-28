@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, matchesGlob } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspacePath } from './ui-workspace.mjs';
 import { parseFrontmatter, roleFilename, roleMetadata } from './role-metadata.mjs';
-import { referenceFile, referenceNamespace } from './role-references.mjs';
+import { agentMarkdown, referenceFile, referenceNamespace } from './role-references.mjs';
 
 const pkg = fileURLToPath(new URL('../../', import.meta.url));
 const charterFile = '.codex/team-charter.md';
@@ -192,9 +192,13 @@ export function rolePacket(root, repo, guide, role, paths = [], env = process.en
     if (!isAbsolute(path) || basename(path) !== 'SKILL.md' || !lstatSync(path).isFile()) throw Error('Неверный путь навыка ' + name);
     add(path.replaceAll('\\', '/'), path);
   }
-  const body = [...files].map(([label, bytes]) => '\nFILE ' + label + ' sha256=' + createHash('sha256').update(bytes).digest('hex') + '\n' + bytes.toString('utf8') + '\n').join('');
+  const body = [...files].map(([label, bytes]) => {
+    const source = bytes.toString('utf8');
+    const content = /\.md$/i.test(label) ? agentMarkdown(source) : source;
+    return '\nFILE ' + label + ' sha256=' + createHash('sha256').update(bytes).digest('hex') + '\n' + content + '\n';
+  }).join('');
   const info = 'Roster: ' + [...team.keys()].join(', ') + '\nAssigned skills (' + role + '): ' + skills.join(', ') + '\n' +
     (missing.length ? 'Недоступен текст навыка в этой сессии: ' + missing.join(', ') + '\n' : '') +
-    (row ? 'Read on spawn: ' + row['Read on spawn'] + '\n' : 'Роль вне состава проекта: ' + role + '\n');
+    (row ? 'Read on spawn: ' + agentMarkdown(row['Read on spawn']) + '\n' : 'Роль вне состава проекта: ' + role + '\n');
   return {role, fields, row, models, files:[...files.keys()], missing, body:info + body};
 }

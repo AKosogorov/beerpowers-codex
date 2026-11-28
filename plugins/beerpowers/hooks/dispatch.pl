@@ -79,7 +79,13 @@ sub emit {
     exit 0;
 }
 sub context {
-    my $text = join "\n\n", grep { defined && length } @_;
+    my @notes = @_;
+    if ($kind eq 'SessionStart' || $kind eq 'SubagentStart') {
+        my $reader = abs_path("$Bin/../bin/role-files.mjs");
+        $reader = Cygwin::posix_to_win_path($reader) if $^O eq 'cygwin';
+        push @notes, "BeerPowers: для перехода по Markdown-ссылке с подсказкой beerpowers:reference/ передай ссылку целиком одним аргументом в Read через node \"$reader\". Обработчик открывает выбранный справочник установленного пакета. Если уже видишь адрес beerpowers:reference/…, передай только его.";
+    }
+    my $text = join "\n\n", grep { defined && length } @notes;
     exit 0 unless length $text;
     emit({hookSpecificOutput => {hookEventName => $kind, additionalContext => $text}});
 }
@@ -158,6 +164,7 @@ if ($kind eq 'Stop') {
     emit({});
 }
 if ($kind =~ /^Subagent(Start|Stop)$/) {
+    context() if $kind eq 'SubagentStart' && (!$project || !enabled('screenshots-reminder', 0));
     emit({}) unless $project;
     my $stop = $kind eq 'SubagentStop';
     my $message = 'Тимлид: проверь изменённые файлы, отчёт роли и SHA, затем прими гейт.';
