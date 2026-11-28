@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -107,10 +107,52 @@ test('Три назначения приходят на границу вызо�
   assert.equal(browser.status,1); assert.ok(browser.stderr.includes(oldBrowser));
 });
 
+test('beerpowers:reference читает доставленные с пакетом справочники из внешнего workspace', t => {
+  const {root, charter, put, env} = fixture(t);
+  const installed = mkdtempSync(join(tmpdir(), 'beerpowers-reference-'));
+  t.after(() => rmSync(installed, {recursive:true, force:true}));
+  cpSync(join(pkg, 'bin'), join(installed, 'bin'), {recursive:true});
+  const dir = join(installed, 'reference');
+  mkdirSync(join(dir, 'ui'), {recursive:true});
+  const ns = 'beerpowers:reference';
+  const label = ns + '/ui/new-guide.md';
+  const cli = (name, args) => spawnSync(process.execPath, [join(installed, 'bin', name), ...args], {cwd:root, env, encoding:'utf8'});
+  const read = target => cli('role-files.mjs', ['Read', target]);
+  const empty = read(ns);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.equal(empty.stdout, '');
+  writeFileSync(join(dir, 'ui/new-guide.md'), 'Документ поставки\n');
+  writeFileSync(join(dir, 'internal.txt'), 'другой формат');
+  symlinkSync(join(root, 'memory'), join(dir, 'external'), process.platform === 'win32' ? 'junction' : 'dir');
+  put('reference/ui/new-guide.md', 'Документ проекта');
+  const index = read(ns);
+  assert.equal(index.status, 0, index.stderr);
+  assert.deepEqual(index.stdout.trim().split(/\r?\n/), [label]);
+  assert.equal(read(label).stdout, 'Документ поставки\n');
+  assert.equal(read('reference/ui/new-guide.md').stdout, 'Документ проекта');
+  for (const name of ['missing.md', 'internal.txt', 'external/MEMORY.md', '../bin/role-files.mjs']) {
+    assert.notEqual(read(ns + '/' + name).status, 0, name);
+  }
+  const packet = () => cli('role-launch.mjs', ['packet','demo','memory/commands/demo.md','tester']);
+  const withReading = list => put('.codex/team-charter.md', charter.replace('`memory/project/tester.md`', list));
+  withReading('[Правила](' + label + '#проверки), `' + ns + '/optional.md` (при наличии)');
+  const result = packet();
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes('FILE ' + label + ' sha256='));
+  assert.match(result.stdout, /sha256=[0-9a-f]{64}\nДокумент поставки/);
+  withReading(label + ', `' + label + '`');
+  assert.equal(packet().stdout.split('FILE ' + label + ' sha256=').length, 2);
+  withReading('`' + ns + '/missing.md`');
+  const missing = packet();
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /missing\.md/);
+});
+
 test('Привязанный ID передаёт YAML tools в зарегистрированный PreToolUse', t => {
   const {root, put, run} = fixture(t);
   const id = 'returned-by-host-fixture';
   const bind = run(['bind','architect', id]); assert.equal(bind.status,0,bind.stderr);
+  assert.match(bind.stdout, /Read 'beerpowers:reference'/);
   const registration = JSON.parse(readFileSync(join(pkg,'hooks/hooks.json'))).hooks.PreToolUse;
   const perl = process.env.BEERPOWERS_PERL ?? (process.platform === 'win32'
     ? join(dirname(dirname(execFileSync('where.exe', ['git.exe'], {encoding:'utf8'}).split(/\r?\n/)[0])), 'usr/bin/perl.exe') : 'perl');
@@ -140,6 +182,7 @@ test('Привязанный ID передаёт YAML tools в зарегист�
   assert.equal(event('functions.exec',id,inner('exec_command',{cmd:grepOnly,login:false})).hookSpecificOutput.permissionDecision,'deny');
   for (const [args, expected] of [
     ["Read 'memory/project/architect.md'", /read:architect/],
+    ["Read 'beerpowers:reference/git-flow.md'", /QA-чеклист/],
     ["Grep 'memory/project' 'read:database'", /memory\/project\/database.md:1:read:database/],
     ["Glob 'memory' 'project/*.md'", /memory\/project\/architect.md/],
   ]) {

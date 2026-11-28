@@ -2,9 +2,10 @@
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { matchesGlob } from 'node:path';
 import { findRoot, workspacePath } from './lib/ui-workspace.mjs';
+import { referenceFile, referenceFiles, referenceNamespace } from './lib/role-references.mjs';
 import { showHelp } from './lib/cli-help.mjs';
 
-showHelp('role-files.mjs Read FILE | Grep FILE_OR_DIRECTORY TEXT | Glob DIRECTORY PATTERN');
+showHelp('role-files.mjs Read FILE | Read beerpowers:reference[/FILE.md] | Grep FILE_OR_DIRECTORY TEXT | Glob DIRECTORY PATTERN');
 const [operation, target, query, ...extra] = process.argv.slice(2);
 const root = findRoot();
 const ignoredDirectories = new Set(['node_modules','vendor']);
@@ -27,7 +28,7 @@ function* regularFiles(file) {
   }
 }
 function readText(file) {
-  const path = source(file);
+  const path = file.startsWith(referenceNamespace + '/') ? referenceFile(file) : source(file);
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.size > 8 * 1024 * 1024) throw Error('Нужен обычный файл до 8 MiB: ' + file);
   const bytes = readFileSync(path);
@@ -35,7 +36,9 @@ function readText(file) {
 }
 try {
   if (!target || extra.length || !['Read','Grep','Glob'].includes(operation) || (operation === 'Read' ? query !== undefined : !query)) throw Error('Проверь аргументы role-files.mjs --help');
-  if (operation === 'Read') {
+  if (operation === 'Read' && target === referenceNamespace) {
+    for (const label of [...referenceFiles().keys()].sort()) console.log(label);
+  } else if (operation === 'Read') {
     const text = readText(target);
     if (text === null) throw Error('Ожидается текстовый файл');
     process.stdout.write(text);
