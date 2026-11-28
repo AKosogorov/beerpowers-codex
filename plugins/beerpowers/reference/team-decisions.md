@@ -18,6 +18,8 @@
 | YAML | Аргументы после префикса | Результат |
 |---|---|---|
 | Read | `Read 'projects/demo/README.md'` | Содержимое текстового файла до 8 MiB |
+| Read | `Read 'beerpowers:reference'` | Список Markdown-справочников установленной версии BeerPowers |
+| Read | `Read 'beerpowers:reference/git-flow.md'` | Содержимое справочника из пакета. Файл задачи читается по пути `memory/tasks/<код>/git-flow.md` |
 | Grep | `Grep 'projects/demo/src' 'условие'` | Совпадения буквальной подстроки с путями и номерами строк |
 | Glob | `Glob 'projects/demo' 'src/**/*.ts'` | Подходящие пути относительно workspace |
 

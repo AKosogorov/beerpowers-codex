@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, matchesGlob } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspacePath } from './ui-workspace.mjs';
 import { parseFrontmatter, roleFilename, roleMetadata } from './role-metadata.mjs';
+import { referenceFile, referenceNamespace } from './role-references.mjs';
 
 const pkg = fileURLToPath(new URL('../../', import.meta.url));
 const charterFile = '.codex/team-charter.md';
@@ -122,26 +123,33 @@ export function pathRules(root, repo, paths = []) {
   return result;
 }
 
-function reading(root, row) {
-  const result = [];
+function addReading(root, row, add) {
   const cell = row?.['Read on spawn'] ?? '';
   // Условия в свободном тексте остаются у тимлида. Все названные документы доступны в пакете.
-  const references = /(?:`([^`]+)`|\[[^\]]*\]\(([^)]+)\)|((?:memory\/|\.codex\/(?:agents\/|roles\/))[^\s`,;()]+?\.md\b))/gu;
+  const references = /(?:`([^`]+)`|\[[^\]]*\]\(([^)]+)\)|((?:beerpowers:reference\/|memory\/|\.codex\/(?:agents\/|roles\/))[^\s`,;()]+?\.md\b))/gu;
   for (const match of cell.matchAll(references)) {
     const path = match[1] ?? match[2] ?? match[3];
-    if (!/^(?:memory\/|\.codex\/(?:agents\/|roles\/))/.test(path) || !path.endsWith('.md')) continue;
-    const local = workspacePath(root, path.replaceAll('*', 'x'));
     const after = cell.slice(match.index + match[0].length);
     const optional = /^\s*\((?:если создан[аоы]?|при наличии)\)/i.test(after);
+    if (path.startsWith(referenceNamespace + '/')) {
+      const label = path.split('#', 1)[0];
+      const file = referenceFile(label, optional);
+      if (file) add(label, file);
+      continue;
+    }
+    if (!/^(?:memory\/|\.codex\/(?:agents\/|roles\/))/.test(path) || !path.endsWith('.md')) continue;
+    const local = workspacePath(root, path.replaceAll('*', 'x'));
     if (!path.includes('*')) {
-      if (!optional || existsSync(local)) result.push(path);
+      if (!optional || existsSync(local)) add(path, local);
       continue;
     }
     const expanded = globSync(path, {cwd:root}).sort();
     if (!expanded.length && !optional) throw Error('Read on spawn: отсутствуют файлы ' + path);
-    for (const entry of expanded) result.push(entry.replaceAll('\\', '/'));
+    for (const entry of expanded) {
+      const label = entry.replaceAll('\\', '/');
+      add(label, workspacePath(root, label));
+    }
   }
-  return result;
 }
 
 export function rolePacket(root, repo, guide, role, paths = [], env = process.env) {
@@ -152,7 +160,9 @@ export function rolePacket(root, repo, guide, role, paths = [], env = process.en
   function add(label, path) {
     if (!files.has(label)) files.set(label, readFileSync(path));
   }
-  const pathsToRead = [charterFile, file, 'memory/MEMORY.md', guide, ...reading(root, row)];
+  for (const path of [charterFile, file, 'memory/MEMORY.md', guide]) add(path, workspacePath(root, path));
+  addReading(root, row, add);
+  const pathsToRead = [];
   if (role === 'team-lead' && existsSync(workspacePath(root, 'memory/project/domain-invariants.md'))) pathsToRead.push('memory/project/domain-invariants.md');
   if (fields.memory) {
     const dir = (fields.memory === 'project' ? '.codex/agent-memory/' : '.codex/agent-memory-local/') + role;
