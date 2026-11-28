@@ -34,17 +34,17 @@ const memoryTemplates = [
 ];
 const replyRules = ['reply_blocking_asks', 'reply_file_links', 'reply_user_shell'];
 const guardNames = ['guard-agent-memory', 'guard-approval-link', 'guard-comments', 'guard-commit-split',
-  'guard-kill', 'guard-project-safety', 'guard-push', 'guard-stdin-code', 'guard-user-files'];
+  'guard-kill', 'guard-project-safety', 'guard-role-tools', 'guard-push', 'guard-stdin-code', 'guard-user-files'];
 // Группы сбалансированы по времени Windows CI. В каждой свой браузерный сценарий.
 const windowsNodeShards = {
   'node-1': [
-    'codex-doctor.test.mjs', 'codex-integrations.test.mjs', 'codex-retro.test.mjs',
+    'codex-doctor.test.mjs', 'codex-role-launch.test.mjs', 'codex-integrations.test.mjs', 'codex-retro.test.mjs',
   ],
   'node-2': [
     'codex-publication.test.mjs', 'codex-task-recovery.test.mjs', 'codex-ui.mjs', 'codex-update.test.mjs',
   ],
   'node-3': [
-    'codex-cli-help.test.mjs', 'codex-git-workspace.mjs', 'codex-make-shim.test.mjs', 'codex-memory.test.mjs',
+    'codex-charter.test.mjs', 'codex-cli-help.test.mjs', 'codex-git-workspace.mjs', 'codex-make-shim.test.mjs', 'codex-memory.test.mjs',
     'codex-migrations.test.mjs', 'codex-onboard.test.mjs', 'codex-package-install.test.mjs', 'codex-pm.test.mjs',
     'codex-qa.test.mjs', 'codex-release-version.test.mjs', 'codex-setup-tracks.test.mjs', 'codex-token-audit.test.mjs', 'codex-tracker.test.mjs',
     'codex-workspace-clean.test.mjs',

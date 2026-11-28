@@ -5,6 +5,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { blocks } from '../../plugins/beerpowers/bin/lib/markdown-engine.mjs';
 
 const pkg = 'plugins/beerpowers';
 const registry = `${pkg}/reference/migrations.md`;
@@ -27,26 +28,17 @@ function file(path) {
   return normalized(readFileSync(path, 'utf8'));
 }
 
-function namedBlock(text, name, path) {
-  const marker = new RegExp('^<!-- beerpowers:engine ' + name + ' -->$', 'm');
-  const openings = text.split('\n').filter(line => marker.test(line));
-  if (!openings.length) return null;
-  assert.equal(openings.length, 1, path + ': duplicate engine marker ' + name);
-  const tail = text.slice(text.search(marker) + openings[0].length + 1);
-  const end = tail.search(/^<!-- \/beerpowers:engine -->$/m);
-  assert.ok(end >= 0, path + ': missing end marker for ' + name);
-  const body = tail.slice(0, end);
-  assert.doesNotMatch(body, /<!--\s*\/?beerpowers:engine\b|\{\{.*?\}\}/, path);
-  return body;
-}
-
 export function validateEngineTemplates() {
   const migration = file(registry);
   for (const [template, name] of managedSources) {
     const path = pkg + '/templates/' + template;
-    assert.notEqual(namedBlock(file(path), name, path), null, 'Missing engine block: ' + name);
-    assert.ok(migration.split('\n').some(line => line.includes('`' + name + '`') &&
-      line.includes('../templates/' + template)), path + ': missing registry mapping');
+    const sections = blocks(file(path), path);
+    assert.ok(sections.has(name), 'Missing engine block: ' + name);
+    for (const [id, section] of sections) {
+      assert.doesNotMatch(section.text, /\{\{[A-Z_]+\}\}/, path);
+      assert.ok(migration.split('\n').some(line => line.includes('`' + id + '`') &&
+        line.includes('../templates/' + template)), path + ': missing registry mapping ' + id);
+    }
   }
   for (const version of ['0.2.0', 'schemaVersion']) assert.ok(migration.includes(version), version);
 }
@@ -63,6 +55,10 @@ const generators = {
   'bin/lib/update-setup.mjs': [
     [/export function setupAdditions\([\s\S]*/, []]
   ],
+  'bin/lib/markdown-engine.mjs': [[/[\s\S]+/, managedBlocks]],
+  'bin/lib/charter.mjs': [[/[\s\S]+/, ['codex-team', 'codex-lead']]],
+  'bin/lib/role-setup.mjs': [[/[\s\S]+/, []]],
+  'bin/lib/memory-links-migration.pl': [[/[\s\S]+/, []]],
   'bin/role-packet.pl': [
     [/^sub stage_six_setup \{[\s\S]*?(?=^sub role_packet \{)/m, []]
   ],
@@ -97,7 +93,7 @@ function checkMigrations(reference) {
   const tree = new Set(git('ls-tree', '-r', '--name-only', '-z', base, '--', registry, ...relativePaths).split('\0'));
   const previous = path => tree.has(path) ? normalized(git('show', `${base}:${path}`)) : null;
   const triggers = [];
-  const blocks = new Set();
+  const affectedBlocks = new Set();
   for (const path of [...names].sort()) {
     const before = previous(path), after = file(path);
     if (before === after) continue;
@@ -105,14 +101,17 @@ function checkMigrations(reference) {
       const template = path.slice((pkg + '/templates/').length);
       const name = managedSources.get(template);
       if (name) {
-        if (namedBlock(before ?? '', name, path) === namedBlock(after ?? '', name, path) && before !== null && after !== null) continue;
-        blocks.add(name);
+        const oldBlocks = blocks(before ?? '', path), newBlocks = blocks(after ?? '', path);
+        const changed = [...new Set([...oldBlocks.keys(), ...newBlocks.keys()])]
+          .filter(id => oldBlocks.get(id)?.text !== newBlocks.get(id)?.text);
+        if (!changed.length && before !== null && after !== null) continue;
+        for (const id of changed) affectedBlocks.add(id);
       }
     } else {
       const changed = generators[path.slice(pkg.length + 1)].filter(([section]) =>
         section.exec(before ?? '')?.[0] !== section.exec(after ?? '')?.[0]);
       if (!changed.length) continue;
-      for (const [, affected] of changed) for (const block of affected) blocks.add(block);
+      for (const [, affected] of changed) for (const block of affected) affectedBlocks.add(block);
     }
     triggers.push(path);
   }
@@ -127,7 +126,7 @@ function checkMigrations(reference) {
   if (!entry || entry === releaseEntry(previous(registry), version)) {
     problems.push(`Добавьте или обновите запись «## ${version}» в ${registry}.`);
   }
-  for (const name of [...blocks].sort()) {
+  for (const name of [...affectedBlocks].sort()) {
     if (!entry.includes('`' + name + '`')) problems.push('Укажите изменённый блок `' + name + '` в записи.');
   }
   if (problems.length) throw new Error([...triggers, ...problems].join('\n'));

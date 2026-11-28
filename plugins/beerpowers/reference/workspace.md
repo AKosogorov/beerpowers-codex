@@ -35,7 +35,6 @@
 |---|---|
 | `.codex/git-settings.json` | Профили проектов и общие настройки [маршрута Git](git-flow.md) |
 | `.codex/git-settings.local.json` | Личные параметры публикации |
-| `.codex/role-settings.json` | Состав, пресеты и карта правил по путям |
 | `.codex/barriers.json` | Переключатели хуков и `comments.excludeDirs`. См. [контракт хуков](hooks.md) |
 | `.codex/figma-settings.json`, `.codex/yandex-tracker-settings.json` | Личные настройки [интеграций](integrations.md) |
 

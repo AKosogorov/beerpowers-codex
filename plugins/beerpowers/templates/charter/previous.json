@@ -1,0 +1,151 @@
+{
+  "team-charter": {
+    "blocks": {
+      "charter-intro": [
+        "21faadb1cc1b6acc57e39a912845d21c918d52482f11b5d6b112eefd1842cbe4"
+      ],
+      "roles-issues": [
+        "62503bcd3ba94c78344598e9055d00225b8c47bb5ae59977dd69171e1536a71e"
+      ],
+      "intake": [
+        "ecb4d0d8d5a8cdd3af7887cc8d9ab5ced8c49347aa0a83587bd647bf2e5454d9"
+      ],
+      "invariants-severity": [
+        "f74e496bae24bfdea9325cb92be6fe88940160aa6d939760d30df357b27fcdb3"
+      ],
+      "gates": [
+        "dbb4c118b662c6c171c65bd0d0b48a63f1d08857075342cd38b6d62b52cbcef4"
+      ],
+      "adversary": [
+        "5b0d2c7f38bf5bfe2883003dfecf970ae888dabc971c4cb4c7e083f4584245cb"
+      ],
+      "communication": [
+        "8f0e1c6b34dea25baf9a53b09a61ed7fda0b13848e44a2a7f0f78eb31aebd6ee"
+      ],
+      "ui-findings-report": [
+        "45c92d545978e93218fec763ca9996bc971db6ac1934a77aaaaa297b5ecbc58a"
+      ],
+      "viewports-scope": [
+        "2a0bcc008f3166f00355a295e7e2cb8ed42e42ea1b99c92c965ed71e13e798a2"
+      ],
+      "git-roles": [
+        "4805f5587501619fcaee69c421c741abccc89126f02cc6adb7d44e8cab4376e5"
+      ],
+      "processes": [
+        "3731e0acb4c3fae69d56e87d00d4c89399ee022ec0a303e6640d5e6f32435bdb"
+      ],
+      "evidence": [
+        "243a4f254412acbe215f59296e17630a17e442b6847f7ce5a44c97398750f721"
+      ],
+      "shell": [
+        "50d78285daeba7285dc9d7f4ae0c2e6ea942e2154b69b7eedff4bd7a52edc8c5"
+      ],
+      "code-hygiene": [
+        "f8190cc6a46a45fd805012c6465c697ed2cafd8c4690c926df0d363459b096f9"
+      ],
+      "evidence-discipline": [
+        "270e1486c09c679134af491ce6ab1c2520522e315af649ede2edf1396ac4c423"
+      ],
+      "memory-files": [
+        "dd473eab05825ea68d76115beb1718f71a08d5cffec0e9217d559f37ffe9a915",
+        "b9f0d9610b15564560810ab1f8204166f1cbb02a90151b4b03c43a2254537ec2"
+      ],
+      "task-artifacts": [
+        "cd8a159ed023e13b4e94948639ad7855414acc13cd700158b36fc864391f490a",
+        "c9a6ac93665ed65c27215f8b911fa5d8da6c618662a61a672d294e24df907e2d"
+      ],
+      "codex-team": [
+        "dbe365632b07b73f3246100d867adb367fcec4442c3ef2f06dd4510d2a0c816a"
+      ]
+    },
+    "paragraphs": [
+      "0ad2cc78fee8179d86fb8b3a4e6ddd722ca8579cd7d68b3323a6157e1ded811f",
+      "f42ce5aa72f602decbf98aa130d1b5aac33132254be3c9bd57c43e4a28a3f4f9",
+      "cf34911a585f45ce4babe2602741b1caccf688da0f42858d77b27553bc63e85b",
+      "a0f231e6c140706c12e6a61118906e409333353415614e9829e89f2b07f24f10",
+      "913b2a8e8a8cd3d7da0314a373a1f309543d597ca2d7c738151c287cae1126cb",
+      "a6bea15d839c2e74fe37ad63861c32ed6adb458cfcdeaccb8563c1b28f613b0c",
+      "0767ae3d3e531aa04a410ec4f1ac829408b6fb9df14fc3e5a4ffe329856475cc",
+      "7fcfc175ac2ad92ae6d7aed6299c02b9918593d1bc53e34f7b2de3ef2af9afb2",
+      "ba0c648aafc7769718621b03dc0374cda4b7ed58b82f757d73728a64ddb2d2e0",
+      "4fb701b104588d2e6e734842796700bc2f6da57728f28196613831cc4f11f839",
+      "c2f9bfaf00d0ad2e8343430559a7aa35c16087b144d660465a2d21b0fc38d1c3",
+      "cc1073d6af4b8ab9e0898818b555d9fdc4a6b9b6c1808fc1c352421cde04bddd",
+      "c93af5a82c2adea15d7ac07c6edc06b09dbfccf726b06f1c165a34fcf2a09838",
+      "6879cb2693c4bcdd5e2a6987833aabfffc565f6baa9f291497c2f660ac2990bd",
+      "1ccfb711edb93fdce4f93ddd9117474e2bfde746a7a8453f5a01075136ed538d",
+      "a4c6456ce3167084ae63b6cce8f280b1b2fccad87db21514a0a5d62d505de1fa",
+      "688c228d014fe0fda95f37e7f736b36746924702e11d85463e61b80bb72a8dc1",
+      "f027ed80750b712c90cd7d78e3465b22895d6fa5f4284a296d012ab2e9c52f40",
+      "47a70139419e9d94c8ff42a396d7b9e1f073efa846c173946cdf511c204375b1",
+      "4fe4d50c82174946b4482547a260b55cc1504d990c7e02702453ee73fbb135e2",
+      "58c7a24af5a51f3c1f9598a6f68ed8784a4a418ab3360c95bd05ce69634bf4b3",
+      "205f125cd28896ecf0c06f58fa7676ed073c1eee27be7b0633643c892b006015",
+      "d4c8806e69af39cc2dc1138d059a010e81781453113528c7fc5952be5eda2266"
+    ]
+  },
+  "team-lead": {
+    "blocks": {
+      "lead-intro": [
+        "1a441c581aa8f18ccec05e07514ee52dbfc63cc567aebb148a98f80374527c53"
+      ],
+      "ui-findings": [
+        "c6f022741d282e2280eb13f8827aaffe54636998407d309559b613f38dbc287e"
+      ],
+      "task-class": [
+        "bc407ac797881ad4db05679db4ff9fd71b7bd5270e4ebda6402298c15501ba24",
+        "2846ea3cca2bd4ebd41abdf4f760a1b04390a8d9059e3e4ba3bf0d0236efbf4d"
+      ],
+      "effort": [
+        "da92f25056a7c0d3ddc4334da5587d85f93e1c8ecd30a61fca4f1a9296834e12"
+      ],
+      "effort-questions": [
+        "ecf50e597b30c12cf56f9cd8d20a6d8de2be03eb5facf217d6bd2e643375f688"
+      ],
+      "workflow": [
+        "af93e0c96b5581cdc145880067d01a346650c0a4827a8bc82064295e10ff0555"
+      ],
+      "forks": [
+        "3120bce6f6f5cc284dc481eb81ea740cc14d596027fea7d68d85bdcf7dcc859e"
+      ],
+      "gates": [
+        "4adb48a7871d3ccb2be3d218373026a42216a69923a01d8f54de5197b8201652"
+      ],
+      "git": [
+        "da988cdcd1daa517da47320e094fd8a25203ebd7290139123b6bc6e4db1d7dbc"
+      ],
+      "closing": [
+        "82584efa72035444470b44a11b7fb1c85e7e126968216c8e62e11ac163d26d64"
+      ],
+      "tracker-write": [
+        "c4295397353c4a1bab7b4485ee7717a9ce535d183bd35c938eedbe7673b5d1ce"
+      ],
+      "failed-rule": [
+        "4f1133ed1cc86fd9a259086a8d8ce760315eedaa019c0201a23c4cad36d99296"
+      ],
+      "adversary": [
+        "9bdeb03d148e4247b872cab4bd8b9654cfbf5e6b80de071ef4e6fc493ef3d245"
+      ],
+      "codex-lead": [
+        "951ed3ff25392ec7a9c9324fca52dbe287eb8381e0c351ecc83eea1f01608100"
+      ]
+    },
+    "paragraphs": [
+      "728774a69bb906decceb39234df0d635312e2e796dc6bbefbf8f407178a7c8fc",
+      "7a987be78f26a53fb1792f0a75ac23e7203f936f8fff79e5910b112a6124bb3b",
+      "15787ce55928d2efb5d630f78e0154743c8516fc4cff11eb58b4b459de1df1e9",
+      "61f85f0aacc6324dc7352b3f4c0b0046dce325c12d6a05104b2638a815b5cdff",
+      "90664c7dd4dac593610f656c427e16dbf609d7e3716497b3b39f02bafb2d9ed9",
+      "486409eb4f8fa427f6e04a17a06338c2bf19e8994a80baa990f9dc9addc0a476",
+      "6422c11907b8ca350bc9e181773d4ecf6aa7373e63392d4fe73680a0099ecf63",
+      "f18176221170cafff46c7e0a9aa9691b2646a66225f515686374a9bce2d337f1",
+      "6367c9e7b27272aa8156406d84b182068f136c5b4dce330e5b9729812a427dd4",
+      "cd6f8961a662abd1d4e7134ce9f2867b0089879949a935950494d5456e6d0eea",
+      "f8b4931f296085abbd5c69a91060f5ea4fab5117b96bb26b0057fca5f263b20d",
+      "1b63f16cc3a8dcce5e41080b52b48411bc853683f8909d018e6dfed58c1c35c0",
+      "48ffef8960ea3b3137222ae5164e3bcefc658b356ac616d8cadc87b74153af82",
+      "8fd51a96db74d1bd4dfd2b0e62acc7a0b882b28db76e1bcf7537be3c5d923b6d",
+      "4266f7669d90cf7bf310320518bd7f2987d10a7be9de8fedf207bc7e1b307888"
+    ]
+  }
+}

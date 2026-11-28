@@ -148,7 +148,7 @@ is($code, 0, 'plan additional product');
 like($out, qr/UPDATE \.codex\/git-settings.json/, 'profile extension visible before applying');
 is((invoke('apply'))[0], 0, 'add configured product to existing workspace');
 is_deeply(decode_json(read_all('.codex/git-settings.json'))->{repos}, {ledger=>'main-default', other=>'custom'}, 'per-product profiles');
-ok(!exists decode_json(read_all('.codex/role-settings/other.json'))->{stacks}, 'setup does not duplicate the stack from a manifest');
+ok(!-e '.codex/role-settings/other.json', 'stack discovery does not generate a second configuration');
 like(read_all('memory/commands/other.md'), qr/node --test/, 'second test command');
 is((invoke('doctor'))[0], 0, 'multi-product doctor');
 ok((invoke('role-packet', undef, undef, 'frontend'))[0] != 0, 'multi-product role requires scope');

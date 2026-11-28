@@ -15,11 +15,11 @@
 | Целевой файл workspace | Имя блока | Поставляемый шаблон |
 | --- | --- | --- |
 | `AGENTS.md` | `entry` | [Вход в устав](../templates/AGENTS.md) |
-| `.codex/team-charter.md` | `codex-team` | [Обязанности команды](../templates/charter/team-charter.md) |
-| `.codex/team-lead.md` | `codex-lead` | [Гейты тимлида](../templates/charter/team-lead.md) |
+| `.codex/team-charter.md` | `charter-intro`, `roles-issues`, `intake`, `invariants-severity`, `gates`, `adversary`, `communication`, `ui-findings-report`, `viewports-scope`, `git-roles`, `processes`, `evidence`, `shell`, `code-hygiene`, `evidence-discipline`, `memory-files`, `task-artifacts`, `codex-team` | [Обязанности команды](../templates/charter/team-charter.md) |
+| `.codex/team-lead.md` | `lead-intro`, `ui-findings`, `task-class`, `effort`, `effort-questions`, `workflow`, `forks`, `gates`, `git`, `closing`, `tracker-write`, `failed-rule`, `adversary`, `codex-lead` | [Гейты тимлида](../templates/charter/team-lead.md) |
 | `memory/MEMORY.md` | `codex-memory` | [Индекс памяти](../templates/memory/MEMORY.md) |
 
-Каждый файл в `templates/engine/` содержит один именованный HTML-комментарий `beerpowers:engine` и закрывающий `/beerpowers:engine`. Свежий setup берёт блоки из этих файлов. Генератор полного индекса памяти подставляет тот же блок `codex-memory` в каркас индекса. Каркасы устава, брифа и индекса задают начальный проектный текст.
+Блок ограничен именованным HTML-комментарием `beerpowers:engine` и закрывающим `/beerpowers:engine`. Setup берёт порядок блоков и места для проектного текста из соответствующего полного шаблона. Блок с условием `if=ui:true` применяется в проектах с включённым UI.
 
 Область замены определяется парой имя файла + имя блока. Старый setup уже добавлял `entry` в `AGENTS.md`. Ранее созданный текст вне маркеров, включая исходный текст прежних каркасов, считается проектным. Обновление устава и брифа дополняет его блоками. Для существующего общего индекса без маркера действует исключение ниже.
 
@@ -46,6 +46,13 @@ Setup собирает плоские брифы под `.codex/agents/`. При
 Из корня checkout BeerPowers Codex выполни `node .github/scripts/check_migrations.mjs --base <коммит>`. Для проверки локальных правок подойдёт `HEAD`, для всей серии правок укажи её исходный коммит. Проверка требует доступную Git-ревизию и включает отслеживаемые изменения и новые неигнорируемые шаблоны.
 
 Если дифф меняет поставляемый шаблон или соответствующую генерацию, добавь или обнови запись с заголовком `## <версия>`. Версия должна совпадать с полем `version` манифеста Codex. Опиши, что изменилось в workspace, и перечисли в обратных кавычках имена всех затронутых управляемых блоков из таблицы. Для нового блока добавь также строку в таблицу соответствий. Пары маркеров проверяются в соответствующих шаблонах. Изменения проектного текста в существующих каркасах устава, брифа и индекса сами по себе не требуют записи.
+
+## 0.12.0
+
+- В [уставе](../templates/charter/team-charter.md) восстановлены границы и порядок блоков `charter-intro`, `roles-issues`, `intake`, `invariants-severity`, `gates`, `adversary`, `communication`, `ui-findings-report`, `viewports-scope`, `git-roles`, `processes`, `evidence`, `shell`, `code-hygiene`, `evidence-discipline`, `memory-files`, `task-artifacts`, `codex-team`. В [инструкции тимлида](../templates/charter/team-lead.md) восстановлены `lead-intro`, `ui-findings`, `task-class`, `effort`, `effort-questions`, `workflow`, `forks`, `gates`, `git`, `closing`, `tracker-write`, `failed-rule`, `adversary`, `codex-lead`. Проектный состав, примеры, дополнения к гейтам и закрытию мигрируют на место соответствующих слотов. `entry` и `codex-memory` остаются точками доставки устава и общей памяти.
+- Setup переносит YAML брифов и проектные переопределения. Для существующего Markdown без шапки поля восстанавливаются в плане обновления. При переносе правил по путям область применения задаёт YAML самого правила. Совместимые `feedback_*.md` копируются побайтово.
+- В активной памяти setup и update исправляют адреса перенесённых инструкций и владельцев правил. В архивных отчётах короткое имя файла получает адрес в Git, если файл и строка отчёта подтверждены на одной архивной ревизии.
+- Личный `.claude/git-settings.local.json` копируется при setup и update только при отсутствии назначения. Если файлы отличаются, процесс сообщает имена и останавливается до записи. Владелец согласует значения локально. Содержимое профиля отсутствует в планах.
 
 ## 0.11.0
 

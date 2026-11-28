@@ -32,8 +32,8 @@ if ([version]$Matches[1] -lt [version]'24.22.3') { Write-Warning 'This Node vers
 
 | Маршрут или операция | Среда обработчика пакета |
 | --- | --- |
-| Базовые `setup` и `doctor` для одного проекта с профилем `main-default` | [workspace.pl](../bin/workspace.pl) и Git. Команда тестов при настройке записывается. Базовая диагностика проверяет файлы и может собрать `role-packet` средствами Perl. |
-| Текстовый `task-start` одного проекта на обычной базе, включая `--preview` и lean, `team-lazy`, `team-up`, `team-down`, реализация feature | В основной ветке `workspace.pl` запускает `task-start`, `review-diff`, `role-packet`, `handover` и `feature-state` средствами Perl и Git. Зависимости реальной команды тестов и выбранных дополнительных проверок определяются отдельно. |
+| Базовые `setup` и `doctor` для одного проекта с профилем `main-default` | [workspace.pl](../bin/workspace.pl) и Git. Команда тестов при настройке записывается. Базовая диагностика проверяет файлы совместно с Node, который структурно разбирает YAML. |
+| Текстовый `task-start` одного проекта на обычной базе, включая `--preview` и lean, `team-lazy`, `team-up`, `team-down`, реализация feature | В основной ветке `workspace.pl` запускает `task-start`, `review-diff`, `handover` и `feature-state` средствами Perl и Git. Пакет роли и аргументы запуска собирает Node через `role-launch.mjs`. Зависимости реальной команды тестов и выбранных дополнительных проверок определяются отдельно. |
 | Хуки пакета | [Реестр хуков](../hooks/hooks.json) вызывает Perl. Для срабатывания необходимо доверие хоста. |
 | `onboard`, `product-onboard` | Node проверяет ссылки тем памяти и источники фактов. [Проверка памяти](onboard-memory.md) |
 | `feature` как продуктовая команда, fast и full PM | Node читает статус документов и следующий checkpoint. [PM-маршрут](../commands/feature.md) |

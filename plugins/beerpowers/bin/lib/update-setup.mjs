@@ -1,5 +1,6 @@
 // Сверяет восстановление настроек setup при обновлении собранного workspace.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { workspacePath } from './ui-workspace.mjs';
 
@@ -31,9 +32,15 @@ export function setupAdditions(root, pkg) {
   const changes = plan.changes.map(({action, path, content}) => {
     if (!/^(?:\.codex\/|memory\/|AGENTS\.md$|\.gitignore$)/.test(path)) throw Error('Unexpected setup target: ' + path);
     workspacePath(root, path);
+    if (action === 'DELETE' && /^\.codex\/role-settings(?:\/[\w.-]+)?\.json$/.test(path)) return {path, action, addition:null};
     if (!['CREATE','APPEND','UPDATE'].includes(action)) throw Error('Unexpected setup action: ' + action);
     const addition = new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(Buffer.from(content, 'base64'));
     return {path, action, addition};
   });
+  if (plan.copyPrivateGit === true) {
+    const path = '.codex/git-settings.local.json';
+    const addition = readFileSync(workspacePath(root, '.claude/git-settings.local.json'));
+    changes.push({path, action:'CREATE', addition});
+  }
   return {changes, advisories: plan.advisories ?? []};
 }

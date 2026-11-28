@@ -7,8 +7,12 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { markupLines, blocks } from './lib/markdown-engine.mjs';
+import { refreshRole } from './lib/role-setup.mjs';
+import { readdirSync } from 'node:fs';
 import { workspacePath } from './lib/ui-workspace.mjs';
 import { setupAdditions, workspaceCheck } from './lib/update-setup.mjs';
+import { refreshCharter } from './lib/charter.mjs';
 
 import { showHelp } from './lib/cli-help.mjs';
 
@@ -70,36 +74,6 @@ function configUpdate(text, to) {
   if (!version) throw Error('Missing workspace version');
   const changed = text.slice(0, version.index) + JSON.stringify(to) + text.slice(version.index + version[0].length);
   return keys.has('schemaVersion') ? changed : changed.replace('{', '{"schemaVersion":1,');
-}
-
-function* markupLines(text) {
-  let fence;
-  for (const line of text.matchAll(/^[^\r\n]+/gm)) {
-    const content = line[0].replace(/^\uFEFF/, '');
-    const mark = /^ {0,3}(\x60{3,}|~{3,})(.*)$/.exec(content);
-    if (fence) {
-      if (mark && mark[1].startsWith(fence) && !mark[2].trim()) fence = null;
-    } else if (mark) fence = mark[1];
-    else yield {content, start:line.index + line[0].length - content.length, end:line.index + line[0].length};
-  }
-  if (fence) throw Error('Unclosed Markdown code fence around the migration target');
-}
-
-function blocks(text, path) {
-  const found = new Map();
-  let open;
-  for (const {content, start, end} of markupLines(text)) {
-    if (!/^\s*<!--\s*\/?beerpowers:engine\b/.test(content)) continue;
-    const begin = /^<!-- beerpowers:engine ([a-zA-Z0-9-]+)(?: if=[\w-]+:[\w.-]+)? -->$/.exec(content);
-    if (begin && !open && !found.has(begin[1])) {
-      open = { name: begin[1], start };
-    } else if (content === '<!-- /beerpowers:engine -->' && open) {
-      found.set(open.name, { ...open, end, text: text.slice(open.start, end) });
-      open = null;
-    } else throw Error('Ambiguous engine marker in ' + path + ': ' + content);
-  }
-  if (open) throw Error('Unclosed engine block ' + open.name + ': ' + path);
-  return found;
 }
 
 function template(dir, file, name) {
@@ -226,16 +200,36 @@ function plan(previous) {
   for (const [path, file, name] of downgrade ? [] : rules) {
     const doc = document(path);
     if (doc.after === null) throw Error('Missing setup document: ' + path);
+    if (file === 'team-charter' || file === 'team-lead') {
+      const resource = 'templates/charter/' + file + '.md';
+      const prior = previous && workspacePath(previous, resource);
+      const refreshed = refreshCharter({file, text:doc.after, ui:config.ui === true, version:from,
+        template:normalize(read(workspacePath(pkg,resource))), prior:prior && lstatSync(prior,{throwIfNoEntry:false}) ? read(prior) : null});
+      if (refreshed !== doc.after) doc.actions.push('restore ' + file + ' engine sections');
+      doc.after = refreshed;
+    }
     const edit = migrateText(doc.after, path, file, name, from, to, previous);
     doc.after = edit.after;
     doc.actions.push(...edit.actions);
     if (name === 'codex-team') doc.beforeStamp = edit.beforeStamp;
   }
+  if (!downgrade) {
+    for (const name of readdirSync(workspacePath(pkg,'templates/roles')).filter(file => file.endsWith('-agent.md')).sort()) {
+      const doc = document('.codex/agents/' + name);
+      if (doc.after === null) continue;
+      const source = 'templates/roles/' + name;
+      const prior = previous && workspacePath(previous, source);
+      const refreshed = refreshRole(doc.after, read(workspacePath(pkg, source)),
+        prior && lstatSync(prior,{throwIfNoEntry:false}) ? read(prior) : null, config.ui === true, doc.path);
+      if (refreshed !== doc.after) doc.actions.push('update role engine blocks');
+      doc.after = refreshed;
+    }
+  }
   const state = document(configPath);
   state.after = configUpdate(original, to);
   state.actions.push('update workspace version/schema');
   const changes = [...projected.values()].filter(doc => doc.before !== doc.after).map(doc => ({
-    ...doc, beforeHash:doc.before === null ? null : sha(doc.before), afterHash:sha(doc.after),
+    ...doc, beforeHash:doc.before === null ? null : sha(doc.before), afterHash:doc.after === null ? null : sha(doc.after),
   }));
   const summary = {from, to, changes: changes.map(({path, actions, beforeHash, afterHash}) => ({path, actions, beforeHash, afterHash}))};
   if (setup.advisories.length) summary.advisories = setup.advisories;
@@ -244,9 +238,23 @@ function plan(previous) {
 
 function replaceFile(change) {
   const path = workspacePath(root, change.path);
+  if (change.after === null) {
+    if (sha(read(path)) !== change.beforeHash) throw Error('Workspace changed: ' + change.path);
+    unlinkSync(path);
+    return;
+  }
   mkdirSync(dirname(path), {recursive:true});
-  const tmp = join(dirname(path), '.beerpowers-update-' + randomUUID() + '.tmp');
-  const mode = lstatSync(path, {throwIfNoEntry:false})?.mode ?? (0o666 & ~process.umask());
+  const privateCopy = change.path === '.codex/git-settings.local.json';
+  let temporaryDirectory = dirname(path);
+  if (privateCopy) {
+    for (const name of ['.claude/git-settings.local.json', change.path, '.codex/.cache/probe']) {
+      execFileSync('git', ['check-ignore', '-q', '--', name], {cwd:root, windowsHide:true});
+    }
+    temporaryDirectory = workspacePath(root, '.codex/.cache');
+    mkdirSync(temporaryDirectory, {recursive:true});
+  }
+  const tmp = join(temporaryDirectory, '.beerpowers-update-' + randomUUID() + '.tmp');
+  const mode = privateCopy ? 0o600 : lstatSync(path, {throwIfNoEntry:false})?.mode ?? (0o666 & ~process.umask());
   const fd = openSync(tmp, 'wx', mode);
   try {
     try { writeFileSync(fd, change.after); chmodSync(tmp, mode); fsyncSync(fd); }

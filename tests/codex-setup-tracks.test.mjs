@@ -4,6 +4,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { readCharter } from '../plugins/beerpowers/bin/lib/role-context.mjs';
+import { parseFrontmatter } from '../plugins/beerpowers/bin/lib/role-metadata.mjs';
+import { refreshRole } from '../plugins/beerpowers/bin/lib/role-setup.mjs';
 import { fileURLToPath } from 'node:url';
 
 const pkg = fileURLToPath(new URL('../plugins/beerpowers/', import.meta.url));
@@ -44,6 +47,212 @@ function fixture(t, product = 'api') {
     setup: (mode, track, options) => run(env.BEERPOWERS_PERL, [join(pkg, 'bin/workspace.pl'), mode], track, options),
     update: track => JSON.parse(run(process.execPath, [join(pkg, 'bin/update.mjs'), 'plan'], track))};
 }
+
+test('setup plan and two applies place distinct charter and lead slots at the intended sections', t => {
+  const f = fixture(t);
+  const table = '| Роль | Проекты | Read on spawn | Миссия |\n|---|---|---|---|\n| `architect` | api | `memory/MEMORY.md` | ROLES-TABLE |';
+  const slots = {'team-charter': {
+    PURPOSE:'PURPOSE-ONE', STACK_TABLE:'STACK-TWO', COMMANDS:'COMMANDS-THREE', ROLES_TABLE:table,
+    MODELS:'| Роль | Модель | Причина |\n|---|---|---|\n| architect | gpt-6.2-astra | MODELS-FOUR |',
+    PROJECT_RULES:'PROJECT-FIVE\n\n~~~~md\n## Состав\n~~~\n<!-- beerpowers:engine example -->\n~~~~',
+    UNIVERSAL_SKILLS:'SKILLS-SIX', MEMORY_FILES_EXTRA:'MEMORY-SEVEN',
+  }, 'team-lead':{
+    CLASS_EXTRA:'CLASS-ONE', EFFORT_TABLE:'EFFORT-TWO', MODEL_EXTRA:'MODEL-THREE', GATES_EXTRA:'GATES-FOUR', CLOSING_EXTRA:'CLOSING-FIVE',
+  }};
+  const options = {BEERPOWERS_PROJECT_NAME:'Fixture', BEERPOWERS_INTAKE:'stages', BEERPOWERS_CHARTER_SLOTS_JSON:JSON.stringify(slots)};
+  const plan = f.setup('plan', undefined, options);
+  assert.match(plan,/CLOSING-FIVE/);
+  assert.ok(!f.has('.codex/team-charter.md'));
+  f.setup('apply', undefined, options);
+  for (const [file, sequence] of Object.entries({
+    'team-charter':['# Team Charter — Fixture','## Назначение','PURPOSE-ONE','## Стек','STACK-TWO','## Команды','COMMANDS-THREE','## Состав','ROLES-TABLE','roles-issues','MODELS-FOUR','## Intake-режим','Intake: stages','evidence-discipline','PROJECT-FIVE','SKILLS-SIX','memory-files','MEMORY-SEVEN','task-artifacts'],
+    'team-lead':['task-class','CLASS-ONE','## Effort и модель роли','EFFORT-TWO','effort-questions','MODEL-THREE','## Порядок гейтов','GATES-FOUR','## Git','## Закрытие задачи','CLOSING-FIVE','## Запись в трекер'],
+  })) {
+    const body = f.read('.codex/' + file + '.md');
+    let offset = -1;
+    for (const value of sequence) {
+      offset = body.indexOf(value,offset+1);
+      assert.ok(offset >= 0, file + ': ' + value);
+    }
+    assert.doesNotMatch(body,/beerpowers:engine ui-findings/);
+  }
+  assert.match(f.setup('apply', undefined, options),/No changes\./);
+  assert.deepEqual(f.update().changes,[]);
+});
+
+test('migration resolves active instruction owners and pins only proven historical references to the archive', t => {
+  const f = fixture(t);
+  const memory = 'memory/MEMORY.md';
+  const report = 'memory/tasks/UNIT-1/design-brief.md';
+  const local = 'memory/project/domain-invariants.md';
+  const fenced = '\r\n~~~~md\r\n`workspace.json` и `team-lead.md`\r\n~~~\r\n~~~~\r\n';
+  const note = 'Снимок `workspace.json` и `guide.md`.  \r\n';
+  const index = '# Память\r\n\r\nЖурнал — `team-lead.md`.\r\n### Владельцы правил\r\n\r\n| Маркер | Владелец |\r\n|---|---|\r\n| `Маркер` | `.claude/team-charter.md` |\r\n';
+  f.put('.claude/team-charter.md','# Team Charter — Archive\n');
+  f.put('.claude/team-lead.md','# Team-lead — Archive\n');
+  f.put('.claude/workspace.json','{}\n');
+  f.put('.claude/rules/guide.md','---\npaths: [projects/api/src/**]\n---\n# Проверка\n');
+  f.put(memory,index + fenced);
+  f.put(report,note + fenced);
+  f.put(local,'Местный файл `workspace.json`.\n');
+  f.put('memory/project/workspace.json','{}\n');
+  f.git('.','add','.claude','memory');
+  f.git('.','-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Архив');
+  const sha = f.git('.','rev-parse','HEAD').trim();
+  const newLine = 'Новая запись: `workspace.json`.\r\n';
+  f.put(report,note + fenced + newLine);
+  const preview = f.setup('plan');
+  assert.ok(preview.includes(sha + ':.claude/workspace.json'));
+  assert.equal(f.read(report),note + fenced + newLine);
+  f.setup('apply');
+  const want = note.replace('workspace.json',sha + ':.claude/workspace.json').replace('guide.md',sha + ':.claude/rules/guide.md');
+  assert.equal(f.read(report),want + fenced + newLine);
+  assert.equal(f.read(memory),index.replace('team-lead.md','.codex/team-lead.md').replace('.claude/team-charter','.codex/team-charter') + fenced);
+  assert.equal(f.read(local),'Местный файл `workspace.json`.\n');
+  assert.match(f.setup('apply'),/No changes\./);
+  f.put(report,note + fenced);
+  const plan = f.update();
+  assert.ok(plan.changes.some(change => change.path === report));
+  f.node('update.mjs','apply',plan.planId);
+  assert.equal(f.read(report),want + fenced);
+  assert.deepEqual(f.update().changes,[]);
+});
+
+test('migration restores the original project name and autonomous intake from the archived charter', t => {
+  const f = fixture(t);
+  f.put('.claude/team-charter.md','# Team Charter — Магазин\n\n## Intake-режим\n\n**Сами от начала до конца.** Свой текст режима.\n');
+  f.setup('apply');
+  const charter = f.read('.codex/team-charter.md');
+  assert.match(charter,/^# Team Charter — Магазин$/m);
+  assert.match(charter,/^Intake: autonomous\s+\*\*Сами от начала до конца\.\*\* Свой текст режима\./m);
+  assert.equal(JSON.parse(f.read('.codex/workspace.json')).projectName,'Магазин');
+  assert.match(f.setup('apply'),/No changes\./);
+});
+
+test('setup imports the ordered project role, preserves feedback bytes and repairs only a missing header', t => {
+  const f = fixture(t);
+  const header = '---\r\nname: architect-agent\r\ndescription: "Project: scope"\r\nmodel: custom-model\r\ncolor: purple\r\nmemory: project\r\ntools:\r\n  - Read\r\nskills: []\r\n---\r\n';
+  const body = '\r\n## DESIGN\r\n1. Intake\r\n\r\n2. Кто меняет значение?\r\n   - редактор\r\n\r\n3. Слои\r\n4. ADR\r\n~~~~markdown\r\n## Решение\r\n~~~\r\n## Последствия\r\n~~~~\r\n5. Срезы\r\n6. Проверка\r\n';
+  const memory = Buffer.from('\ufeff---\r\nsource: meeting\r\n---\r\n> «Точные слова»  ');
+  const path = '.codex/agents/architect-agent.md';
+  f.put('.claude/agents/architect-agent.md', header + body);
+  f.put('.claude/agent-memory/architect-agent/feedback_example.md', memory);
+  f.setup('apply');
+  assert.equal(f.read(path), header + body);
+  assert.deepEqual(readFileSync(join(f.root, '.codex/agent-memory/architect/feedback_example.md')), memory);
+  const edited = body + 'Собственное дополнение.';
+  f.put(path, edited);
+  assert.match(f.setup('plan'), /UPDATE \.codex\/agents\/architect-agent\.md/);
+  assert.equal(f.read(path), edited);
+  const plan = f.update();
+  f.node('update.mjs', 'apply', plan.planId);
+  assert.equal(f.read(path), header + edited);
+  f.put(path, (header + edited).replace('custom-model', 'manual-model'));
+  assert.deepEqual(f.update().changes, []);
+  assert.match(f.setup('apply'), /^No changes\.$/m);
+});
+
+test('role engine update keeps project paragraphs, fenced examples and a manual YAML value byte for byte', () => {
+  const block = (key, value, condition = '') => '<!-- beerpowers:engine ' + key + condition + ' -->\n' + value + '\n<!-- /beerpowers:engine -->';
+  const old = block('phase', 'Старое требование'), replacement = block('phase', 'Новое требование');
+  const ui = block('screen', 'Проверить экран', ' if=ui:true');
+  const existing = '---\nname: testing-agent\nmodel: "manual"\ndescription: |-\n  ~~~~\n---\n## Порядок\nАвторский пункт 2.\n\n' +
+    old + '\n\n## Пример\n~~~~md\n## Порядок\n' + old + '\n~~~~\nПосле примера.\n\n' + ui;
+  const newTemplate = '## Порядок\n' + replacement + '\n\n## Пример\n' + ui;
+  const crlf = value => value.replaceAll('\n', '\r\n');
+  assert.equal(refreshRole(crlf(existing), newTemplate, newTemplate.replace(replacement, old), true, 'testing'),
+    crlf(existing.replace(old, replacement)));
+  assert.equal(refreshRole(crlf(existing), newTemplate, newTemplate.replace(replacement, old), false, 'testing'),
+    crlf(existing.replace(old, replacement).replace(ui, '')));
+  assert.throws(() => refreshRole(existing.replace(old, old.replace('Старое', 'Ручное')), newTemplate,
+    newTemplate.replace(replacement, old), true, 'testing'), /Conflict.*phase/);
+});
+
+test('migration replaces the archived role index guidance once and preserves notes, links and conflicting feedback', t => {
+  const f = fixture(t);
+  const source = '.claude/agent-memory/architect-agent/', target = '.codex/agent-memory/architect/';
+  const policy = 'Сюда — только `feedback_*.md`: поправки человека к работе роли. Знание о проекте — в `memory/`\r\n' +
+    'по таблице «Куда класть находку» `memory/MEMORY.md`; правило — charter, «Память роли — только\r\nобратная связь человека».';
+  const intro = '# Память роли architect-agent\r\n\r\n' + policy + '\r\n\r\n';
+  const notes = 'Прочитай до оценки.\r\n\r\n- [Слова автора](feedback_topic.md) — по запросу.\r\n  Подпункт.  \r\n\r\nПосле ссылки.';
+  const detail = Buffer.from('\ufeff---\r\nsource: transcript\r\n---\r\n«Слова автора»  ');
+  f.put(source + 'MEMORY.md', intro + notes);
+  f.put(source + 'feedback_topic.md', detail);
+  f.setup('apply');
+  const canonical = readFileSync(join(pkg,'templates/role-memory/MEMORY.md'),'utf8').replace(/\r?\n/g,'\r\n');
+  const expected = canonical + '\r\n' + notes;
+  assert.equal(f.read(target + 'MEMORY.md'), expected);
+  assert.deepEqual(readFileSync(join(f.root, target + 'feedback_topic.md')), detail);
+  assert.match(f.setup('apply'), /^No changes\.$/m);
+  f.put(target + 'MEMORY.md', intro + notes);
+  assert.match(f.setup('plan'), /UPDATE \.codex\/agent-memory\/architect\/MEMORY.md/);
+  f.setup('apply');
+  assert.equal(f.read(target + 'MEMORY.md'), expected);
+  const own = '# Своя памятка\r\nМоё правило.  ';
+  f.put(target + 'MEMORY.md', own);
+  assert.match(f.setup('apply'), /^No changes\.$/m);
+  f.put(target + 'feedback_topic.md', 'Сохранённая правка владельца');
+  assert.throws(() => f.setup('apply'), /conflict.*feedback_topic\.md/i);
+  assert.equal(f.read(target + 'MEMORY.md'), own);
+  assert.equal(f.read(target + 'feedback_topic.md'), 'Сохранённая правка владельца');
+  assert.deepEqual(readFileSync(join(f.root, source + 'feedback_topic.md')), detail);
+});
+
+test('setup moves legacy scoped skills and path bindings to their owners before removing configuration', t => {
+  const f = fixture(t), meta = path => parseFrontmatter(f.read(path)).fields;
+  f.put('projects/web/README.md', 'Tests: git diff --check\n');
+  f.git('projects/web', 'init', '-q');
+  const checks = Object.fromEntries(['api','web'].map(name => [name, {command:'git diff --check', source:'README.md', profile:'main-default'}]));
+  const options = {BEERPOWERS_TESTS_JSON:JSON.stringify(checks)};
+  f.setup('apply', 'both', options);
+  const base = '.codex/role-settings', brief = '.codex/agents/testing-agent.md', rule = '.codex/rules/status.md';
+  f.put(rule, '# Проверка статуса\n');
+  f.put(base + '.json', '{"rules":{}}');
+  for (const name of ['api','web']) f.put(base + '/' + name + '.json', JSON.stringify({
+    team:['architect','tester'], skills:{tester:['skill-' + name], 'team-lead':['lead-' + name]}, rules:{status:[name === 'api' ? 'src' : 'ui']},
+  }));
+  const preview = f.setup('plan', undefined, options);
+  assert.match(preview, /DELETE \.codex\/role-settings\/api\.json/);
+  assert.deepEqual(meta(brief).skills, []);
+  f.setup('apply', undefined, options);
+  assert.deepEqual(meta(brief).project_skills, {api:['skill-api'], web:['skill-web']});
+  assert.deepEqual(meta('.codex/team-lead.md').project_skills, {api:['lead-api'], web:['lead-web']});
+  assert.deepEqual(meta(rule).paths, ['projects/api/src', 'projects/web/ui']);
+  assert.ok(f.read(rule).endsWith('# Проверка статуса\n'));
+  assert.ok(!f.has(base + '.json') && !f.has(base + '/api.json') && !f.has(base + '/web.json'));
+  assert.match(f.setup('apply', undefined, options), /^No changes\.$/m);
+});
+
+test('local Git settings migrate privately on setup and update', t => {
+  const old = '.claude/git-settings.local.json';
+  const dest = '.codex/git-settings.local.json';
+  const settings = '{\r\n  "reviewer": "synthetic-personal-marker"\r\n}';
+  const f = fixture(t);
+  f.setup('apply');
+  assert.equal(f.has(dest), false);
+  f.put(old, settings);
+  for (const mode of ['plan', 'plan-json']) {
+    const preview = f.setup(mode);
+    assert.doesNotMatch(preview, /synthetic-personal-marker/);
+    assert.ok(!preview.includes(Buffer.from(settings).toString('base64')));
+  }
+  assert.equal(f.has(dest), false);
+  const plan = f.update();
+  assert.ok(plan.changes.some(change => change.path === dest));
+  f.node('update.mjs', 'apply', plan.planId);
+  assert.equal(f.read(dest), settings);
+  assert.equal(f.read(old), settings);
+  assert.equal(f.git('.', 'check-ignore', '--', dest, old).trim().split(/\r?\n/).length, 2);
+  assert.match(f.setup('apply'), /^No changes\.$/m);
+  f.put(dest, '{"reviewer":"other-synthetic-marker"}');
+  assert.throws(() => f.setup('apply'), /git-settings\.local\.json.*conflict/i);
+  assert.equal(f.read(dest), '{"reviewer":"other-synthetic-marker"}');
+  const fresh = fixture(t);
+  fresh.put(old, settings);
+  assert.doesNotMatch(fresh.setup('apply'), /synthetic-personal-marker/);
+  assert.equal(fresh.read(dest), settings);
+  assert.match(fresh.setup('apply'), /^No changes\.$/m);
+});
 
 test('setup previews and installs the workspace safety policy without overwriting project config', t => {
   const config = '.codex/config.toml';
@@ -218,7 +427,8 @@ test('changing a saved guide updates generated pointers and preserves edited tab
   f.put(gates, customGate + previousGate);
   f.put(memory, f.read(memory) + '\nРучная ссылка [справка](commands/demo.md).\n');
   f.put(commands, f.read(commands).replace('Штатные проверки проекта demo', 'Ручное описание проверок'));
-  f.put(charter, f.read(charter).replace(/^(\| `tester` \|.*) \|$/m, '$1, `memory/tests/extra.md` |'));
+  f.put('memory/tests/extra.md', '# Проектное дополнение к проверкам\n');
+  f.put(charter, f.read(charter).replace(/^(\| `tester` \|[^|]*\|[^|]+?) \|/m, '$1, `memory/tests/extra.md` |'));
 
   const guide = 'memory/commands/api.md';
   f.put(guide, '# API\n\n## Гейты\n\n- `make -C projects/demo check`\n');
@@ -332,7 +542,7 @@ test('PM-only setup delivers project identity, confirmed slots and table rows fo
   const charter = readMarkdown('.codex/team-charter.md');
   assert.match(charter, /^# Team Charter — Каталог заказов$/m);
   assert.match(charter, /## Назначение\s+Продажа товаров\.\s+## Стек/);
-  assert.match(charter, /## Стек\s+Таблица подтверждённого стека\.\s+## Команды/);
+  assert.match(charter, /## Стек \(фиксированный\)\s+Таблица подтверждённого стека\.\s+## Команды/);
   assert.match(charter, /## Команды\s+Единый указатель команд продукта\.\s+## Состав/);
   assert.match(charter, /\| Роль \| Проекты \| Read on spawn \|/);
   assert.match(charter, /\| `product` \| api, web \|/);
@@ -362,7 +572,7 @@ test('repeated setup updates the roster and command index without replacing proj
   f.setup('apply', 'pm');
   const charterPath = '.codex/team-charter.md';
   const indexPath = 'memory/commands/README.md';
-  const authoredRole = '|`product`| api | Ручной список чтения |';
+  const authoredRole = '|`product`| api | Ручной список чтения | Ручная миссия | Свой триггер | Своя практика |';
   const charter = f.read(charterPath).replace(/^\| `product` \|[^\r\n]*/m, authoredRole) + '\n## Местные правила\n\nРучной текст.\n';
   f.put(charterPath, charter);
   const index = f.read(indexPath).replace(/^\| \[api\.md\]\(api\.md\) \|[^\r\n]*/m, '| [Проверки](api.md) | Ручное назначение | Команда |');
@@ -384,7 +594,7 @@ test('repeated setup updates the roster and command index without replacing proj
   assert.equal([...roster.matchAll(/^\|[ \t]*`product`[ \t]*\|/gm)].length, 1);
   assert.match(after, /## Местные правила\n\nРучной текст\./);
   assert.match(after, /^## Команда разработки$/m);
-  assert.ok(JSON.parse(f.read('.codex/role-settings.json')).team.includes('reviewer'));
+  assert.ok(!f.has('.codex/role-settings.json'));
   const updatedIndex = f.read(indexPath);
   assert.match(updatedIndex, /Ручное назначение \| Команда \|\r\n\| \[lint\.md\]\(lint\.md\) \| Проверка стиля \| frontend \|\r\n\r\nСм\. также \[заметку\]\(lint\.md\)\./);
   assert.equal(f.read('memory/commands/lint.md'), '# Линт\n');
@@ -409,7 +619,7 @@ test('setup extends a project roster with reordered columns and a manual mission
   const roster = charter.match(/^## Состав\r?\n([\s\S]*?)^## /m)[1];
   assert.ok(roster.includes(table));
   assert.match(roster, /^\|\s*\| `reviewer` \| `\.codex\/agents\/reviewer-agent\.md`[^\r\n]+ \| api \|$/m);
-  assert.ok(JSON.parse(f.read('.codex/role-settings.json')).team.includes('reviewer'));
+  assert.ok(!f.has('.codex/role-settings.json'));
   assert.match(f.setup('apply', 'both'), /No changes\./);
   assert.equal(f.read(charterPath), charter);
 });
@@ -447,27 +657,28 @@ test('setup preserves intake, manual roster, assigned skills and three project w
     BEERPOWERS_SESSION_SKILLS_JSON:'["nuxt"]', BEERPOWERS_ROLE_SKILLS_JSON:'{"api":{"frontend":["nuxt"]}}',
     BEERPOWERS_VIEWPORTS_JSON:JSON.stringify(points.map(({width}, index) => ({width, name:'v'+width, height:800, mobile:index===0})))};
   f.setup('apply', 'dev', options);
-  const settings = JSON.parse(f.read('.codex/role-settings.json'));
-  assert.deepEqual(settings.team, ['architect', 'frontend', 'tester', 'reviewer', 'explorer', 'devops', 'auditor']);
+  const path = '.codex/team-charter.md';
+  const roles = () => [...readCharter(f.root, 'api').team.keys()];
+  const active = ['architect', 'frontend', 'tester', 'reviewer', 'explorer', 'devops', 'auditor'];
+  assert.deepEqual(roles().sort(), active.sort());
   assert.match(f.read('.codex/team-charter.md'), /^Intake: stages$/m);
   assert.match(f.packet('frontend'), /Assigned skills \(frontend\): nuxt/);
   assert.match(f.packet('frontend'), /FILE memory\/project\/domain-invariants.md sha256=/);
   assert.deepEqual(JSON.parse(f.read('.codex/workspace.json')).viewports.map(item => item.width), [375, 848, 1440]);
-  settings.team = ['architect', 'tester'];
-  f.put('.codex/role-settings.json', JSON.stringify(settings));
-  assert.match(f.setup('apply'), /UPDATE \.codex\/team-charter\.md/);
-  const roster = f.read('.codex/team-charter.md').match(/^## Состав\r?\n([\s\S]*?)^## /m)[1];
-  assert.deepEqual([...roster.matchAll(/^\| `([a-z-]+)` \|/gm)].map(match => match[1]), settings.team);
+  f.put(path, f.read(path).replace(/(^## Состав\r?\n)([\s\S]*?)(?=^## )/m, (_, heading, table) =>
+    heading + table.split(/(?<=\n)/).filter(line => !/^\| `(?:auditor|devops|explorer|frontend|reviewer)`/.test(line)).join('')));
+  assert.match(f.setup('apply'), /No changes\./);
+  assert.deepEqual(roles(), ['architect', 'tester']);
   assert.match(f.setup('apply', 'dev', options), /No changes\./);
   assert.match(f.setup('apply', undefined, {BEERPOWERS_INTAKE:'autonomous'}), /No changes\./);
   assert.match(f.read('.codex/team-charter.md'), /^Intake: stages$/m);
-  assert.deepEqual(JSON.parse(f.read('.codex/role-settings.json')).team, settings.team);
+  assert.deepEqual(roles(), ['architect', 'tester']);
   assert.deepEqual(f.update().changes, []);
 });
 
 test('setup plans missing assigned skills and unavailable integrations without changing configuration', t => {
   const f = fixture(t);
-  const settingsFile = '.codex/role-settings.json';
+  const settingsFile = '.codex/agents/frontend-agent.md';
   f.setup('apply', undefined, {
     BEERPOWERS_SESSION_SKILLS_JSON: '["nuxt"]',
     BEERPOWERS_ROLE_SKILLS_JSON: '{"api":{"frontend":["nuxt"]}}',
@@ -495,8 +706,7 @@ test('compact setup keeps the single implementation layer and installs the optio
   f.git('projects/api', 'add', '.');
   f.setup('apply', 'dev', {BEERPOWERS_TEAM_SIZE:'compact', BEERPOWERS_INTAKE:'autonomous'});
   assert.match(f.read('.codex/team-charter.md'), /^Intake: autonomous$/m);
-  const roster = JSON.parse(f.read('.codex/role-settings.json'));
-  assert.deepEqual(roster.team, ['architect', 'frontend', 'tester', 'reviewer']);
+  assert.deepEqual([...readCharter(f.root, 'api').team.keys()].sort(), ['architect', 'frontend', 'reviewer', 'tester']);
   assert.match(f.packet('explorer'), /FILE \.codex\/agents\/explorer-agent.md sha256=/);
   assert.match(f.setup('apply'), /No changes\./);
 });

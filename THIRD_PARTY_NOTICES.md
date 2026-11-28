@@ -77,3 +77,8 @@ SOFTWARE.
 
 Добавляя новый скил-адаптацию, впиши сюда апстрим и его notice — строки атрибуции
 в шапке `SKILL.md` для этого недостаточно.
+
+## js-yaml
+
+Для разбора YAML frontmatter пакет включает ES-модуль js-yaml 4.1.1 (MIT).
+[Исходный проект](https://github.com/nodeca/js-yaml/tree/4.1.1) · [Лицензия](plugins/beerpowers/bin/vendor/js-yaml/LICENSE).

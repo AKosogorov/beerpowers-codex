@@ -83,7 +83,7 @@ local $ENV{BEERPOWERS_MEMORY_JSON} = encode_json({
     confirmExtra => 'Confirm new supported locales.',
 });
 my $plan = run_ok($^X, $handler, 'plan');
-like($plan, qr/CREATE \.codex\/role-settings\.json/, 'setup plans stack detection');
+like($plan, qr/Detected stacks \(projects\/frontend\): nuxt/, 'setup detects the stack');
 ok(!-e '.codex', 'plan leaves workspace unconfigured');
 run_ok($^X, $handler, 'apply');
 like(read_text('memory/project/project-map.md'), qr{Frontend: app/locales/}, 'confirmed map fills the project slot');

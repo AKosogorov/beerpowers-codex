@@ -12,7 +12,7 @@ use File::Temp ();
 BEGIN { $0 = Cygwin::win_to_posix_path($0) if $^O eq 'cygwin' && $0 =~ /\\/ }
 use FindBin qw($Bin);
 for my $hook (qw(shell git session-start guard-agent-memory guard-user-files guard-approval-link guard-project-safety
-                guard-push guard-kill guard-stdin-code guard-commit-split guard-comments)) {
+                guard-push guard-kill guard-stdin-code guard-commit-split guard-comments guard-role-tools)) {
     require "$Bin/$hook.pl";
 }
 for my $reminder (qw(quality-reminder screenshots-reminder)) {
@@ -114,6 +114,28 @@ sub seen {
 }
 my ($window, $setup_root) = setup_window();
 
+# Code mode: normalize a single call with a JSON literal. Never evaluate JavaScript.
+sub exact_tool_input {
+    my ($name, $argument) = @_;
+    $name = 'apply_patch' if $name eq 'functions.apply_patch';
+    if ($name =~ /\A(?:functions\.)?exec\z/) {
+        my $code = ref($argument) eq 'HASH' ? ($argument->{code} // $argument->{command}) : $argument;
+        if (defined($code) && !ref($code)) {
+            $code =~ s/\A\s*text\((await [\s\S]*)\);?\s*\z/$1/;
+            if ($code =~ /\A\s*await tools\.(exec_command|write_stdin|apply_patch|web__run)\(([\s\S]+)\);?\s*\z/) {
+                my ($inner, $literal) = ($1, $2);
+                my $arg = eval { $json->decode(encode('UTF-8', $literal)) };
+                if (!$@ && (($inner eq 'apply_patch' && !ref($arg) && defined($arg)) ||
+                            ($inner ne 'apply_patch' && ref($arg) eq 'HASH'))) {
+                    ($name, $argument) = ($inner, $arg);
+                }
+            }
+        }
+    }
+    $argument = {command => $argument} if $name eq 'apply_patch' && !ref($argument);
+    return ($name, $argument);
+}
+
 sub patch_paths {
     my ($text, $base) = @_;
     return unless $text =~ /^\*{3} Begin Patch\r?$/m && $text =~ /^\*{3} End Patch\r?$/m;
@@ -145,8 +167,11 @@ if ($kind =~ /^Subagent(Start|Stop)$/) {
 }
 exit 0 unless $project || defined $setup_root;
 exit 0 unless $kind eq 'PreToolUse' || $kind eq 'PostToolUse';
+($tool, $input) = exact_tool_input($tool, $input);
+guard_role_tools($event, $root, $cwd, $json, $tool, $input) if $project && $kind eq 'PreToolUse';
+exit 0 unless $tool =~ /^(?:Bash|apply_patch|(?:functions\.)?request_user_input(?:_async)?|(?:functions\.)?exec(?:_command)?)$/;
 guard_approval_link($project, $input) if $tool =~ /^(?:functions\.)?request_user_input(?:_async)?$/;
-my $cmd = ref $input eq 'HASH' ? $input->{command} : undef;
+my $cmd = ref $input eq 'HASH' ? ($input->{command} // $input->{cmd}) : undef;
 if ($tool =~ /^(?:functions\.)?exec$/ || !defined $cmd || ref $cmd) {
     context('BeerPowers advisory: событие не содержит точной команды или патча. Проверь действие и ограничения вручную.');
 }

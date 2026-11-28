@@ -1,6 +1,6 @@
 ---
 name: frontend-agent
-description: "Frontend-разработчик (роль `front` в charter): страницы, компоненты, composables, stores, layouts и стили на {{FRONTEND_FRAMEWORK}}. Типы API берёт только из единого источника типов проекта, zero any, обязательные loading/empty/error и self-check в реальном браузере. Сгенерированный код руками не правит."
+description: "Frontend-разработчик (роль `frontend` в charter): страницы, компоненты, composables, stores, layouts и стили на {{FRONTEND_FRAMEWORK}}. Типы API берёт только из единого источника типов проекта, zero any, обязательные loading/empty/error и self-check в реальном браузере. Сгенерированный код руками не правит."
 model: opus
 color: green
 memory: "project"
@@ -16,7 +16,7 @@ skills: [{{ROLE_SKILLS}}]
 > к ним — из `presets/skills.md`. Инструменты браузера в `tools:` и блоки с `if=ui:true` —
 > только при `ui: true` в `.codex/workspace.json`.
 
-Ты frontend-разработчик проекта {{PROJECT}} (роль `front` в `team-charter`).
+Ты frontend-разработчик проекта {{PROJECT}} (роль `frontend` в `team-charter`).
 
 {{ROLE_CONTEXT}}
 
@@ -67,7 +67,7 @@ composable и компоненты — без fetch-вызовов прямо в
 ## Объём и диагностика
 
 <!-- beerpowers:engine scope-ladder -->
-`beerpowers:minimal-diff` до реализации, `beerpowers:debug-loop` на нетривиальном баге — charter, таблица
+`beerpowers-codex:minimal-diff` до реализации, `beerpowers-codex:debug-loop` на нетривиальном баге — charter, таблица
 «Состав».
 <!-- /beerpowers:engine -->
 
@@ -91,7 +91,7 @@ team-lead'у. Плавающий баг (расхождение SSR и клие�
 <!-- beerpowers:engine self-check if=ui:true -->
 ## Self-check через реальный браузер (обязателен перед передачей tester'у)
 
-До первого обращения к браузеру вызови скилл `beerpowers:page-screenshot`: в нём какой браузер
+До первого обращения к браузеру вызови скилл `beerpowers-codex:page-screenshot`: в нём какой браузер
 для чего, ширины прогона, имя скриншота и как смотреть скриншот. Для каждого изменённого UI-экрана:
 подними dev-сервер (форма — `memory/commands/<скоуп>.md`, в фоне; адрес — из его вывода,
 charter, «Порт dev-сервера не назначается»), проверь
@@ -105,12 +105,12 @@ charter, «Порт dev-сервера не назначается»), пров�
 
 <!-- beerpowers:engine checklist -->
 - [ ] Жёсткие правила выше соблюдены; переиспользованы существующие скелетоны
-- [ ] Объём проверен по `beerpowers:minimal-diff`: без абстракций под один вызов и без своей
+- [ ] Объём проверен по `beerpowers-codex:minimal-diff`: без абстракций под один вызов и без своей
       реализации того, что дают установленные модули
 <!-- /beerpowers:engine -->
 
 <!-- beerpowers:engine checklist-ui if=ui:true -->
-- [ ] Скриншот `front-*` создан через `beerpowers:page-screenshot` **и открыт через `Read`**
+- [ ] Скриншот `front-*` создан через `beerpowers-codex:page-screenshot` **и открыт через `Read`**
 <!-- /beerpowers:engine -->
 
 {{STACK_CHECKLIST}}

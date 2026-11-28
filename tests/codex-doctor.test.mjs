@@ -62,14 +62,12 @@ test('doctor fails on a missing configured UI browser and tracked mutation resou
 
 test('doctor names the project and role when an assigned skill is missing from this session', t => {
   const {root,env,report} = workspace(t);
-  const file = join(root,'.codex/role-settings.json');
-  const cfg = JSON.parse(readFileSync(file,'utf8'));
-  cfg.skills = {frontend:['nuxt','nuxt-ui']};
-  writeFileSync(file,JSON.stringify(cfg));
+  const file = join(root,'.codex/agents/architect-agent.md');
+  writeFileSync(file,readFileSync(file,'utf8').replace(/^skills:.*$/m, 'skills: [nuxt, nuxt-ui]'));
   delete env.BEERPOWERS_SESSION_SKILLS_JSON;
   assert.equal(report().checks['role-skills'].status,'unavailable');
   env.BEERPOWERS_SESSION_SKILLS_JSON = '["nuxt"]';
-  assert.deepEqual(report().checks['role-skills'].evidence, [{product:'app',role:'frontend',skill:'nuxt-ui'}]);
+  assert.deepEqual(report().checks['role-skills'].evidence, [{product:'app',role:'architect',skill:'nuxt-ui'}]);
   env.BEERPOWERS_SESSION_SKILLS_JSON = '["nuxt","nuxt-ui"]';
   assert.equal(report().checks['role-skills'].status,'pass');
 });
@@ -111,6 +109,7 @@ test('workspace checks report configuration, rule ownership and template drift t
   mkdirSync(join(root,'.codex/rules'), {recursive:true});
   writeFileSync(join(root, '.codex/rules/owner.md'), 'уникальное правило\n');
   writeFileSync(join(root, '.codex/rules/other.md'), 'уникальное правило\n');
+  mkdirSync(join(root, '.codex/agent-memory/tester'), {recursive:true});
   writeFileSync(join(root, '.codex/agent-memory/tester/extra.txt'), 'old notes\n');
 
   const {code, checks} = report();
@@ -174,7 +173,7 @@ test('expanded doctor reconciles installed resources without writing or reading 
   run('git', ['-c','user.name=Doctor fixture','-c','user.email=doctor@example.invalid','commit','-qm','Workspace']);
   const {code, checks} = report();
   assert.equal(code, 0);
-  for (const id of ['package','workspace','migration','role-settings','barriers','memory-links','ui','qa-settings']) {
+  for (const id of ['package','workspace','migration','role-briefs','barriers','memory-links','ui','qa-settings']) {
     assert.equal(checks[id].status, 'pass', id);
   }
   assert.equal(checks.host.evidence.hookTrust, null);
@@ -195,12 +194,12 @@ test('multi-product migration reuses each saved command and extended doctor repo
     '# Web\n\nКаталог запуска: \x60projects/web/\x60\nИсточник: \x60web.md\x60\n\n\x60\x60\x60text\nnpm test\n\x60\x60\x60\n');
   const update = join(bin,'update.mjs');
   const preview = JSON.parse(run(process.execPath,[update,'plan']));
-  assert.ok(preview.changes.some(change => change.path === '.codex/role-settings/web.json'));
+  assert.ok(preview.changes.some(change => change.path === '.codex/team-charter.md'));
   run(process.execPath,[update,'apply',preview.planId]);
   const {checks,code} = report();
   assert.equal(code,0,JSON.stringify(checks));
   assert.equal(checks.workspace.evidence.length,2);
-  assert.deepEqual(Object.keys(checks['role-settings'].evidence).sort(),['app','web']);
+  assert.deepEqual(Object.keys(checks['role-briefs'].evidence).sort(),['app','web']);
   assert.deepEqual(checks.migration.evidence.changes,[]);
 });
 

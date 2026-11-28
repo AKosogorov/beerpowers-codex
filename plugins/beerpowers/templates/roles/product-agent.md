@@ -67,7 +67,7 @@ Feature / Slug / Status / Дата — шапка по конвенции charte
 
 <!-- beerpowers:engine decompose-estimate -->
 - Work items привязывай к слоям и конкретным файлам из consult-выводов dev-ролей (architect —
-  слои и инварианты; `db`/`front`/`tester` — каждый свой слой). Consult-выводы тебе передаёт
+  слои и инварианты; `database`/`frontend`/`tester` — каждый свой слой). Consult-выводы тебе передаёт
   team-lead или сами роли сообщением в текущей команде; сам код не обследуешь и не правишь.
 - Размер work item (S / M / L / XL + confidence + риски) даёт профильная dev-роль — владелец слоя;
   ты сводишь, проверяешь полноту и согласованность.

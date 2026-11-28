@@ -380,8 +380,12 @@ sub markdown_prose {
 
 my $project_input = !$doctor && !$machine_plan ? $ENV{BEERPOWERS_PROJECT_NAME} : undef;
 my $saved_label = ref($saved_workspace) eq 'HASH' ? $saved_workspace->{projectName} : undef;
+my $archived_label;
+if (!defined($project_input) && !defined($saved_label) && !-f '.codex/team-charter.md' && -f safe_path('.claude/team-charter.md')) {
+    ($archived_label) = markdown_prose(read_file('.claude/team-charter.md')) =~ /^# Team Charter — ([^\r\n]+)$/m;
+}
 my $project_name = defined($project_input) ? decode('UTF-8', $project_input, FB_CROAK | LEAVE_SRC) : $saved_label //
-    decode('UTF-8', @repos == 1 ? $repo : basename(getcwd()), FB_CROAK | LEAVE_SRC);
+    decode('UTF-8', $archived_label // (@repos == 1 ? $repo : basename(getcwd())), FB_CROAK | LEAVE_SRC);
 die "Expected a single-line project name\n" if ref($project_name) || !length($project_name) ||
     $project_name =~ /\A\s|\s\z|[\x00-\x1f\x7f<>{}]/;
 die "Project name differs from saved workspace name\n" if defined($saved_label) && $project_name ne $saved_label;
@@ -401,7 +405,8 @@ if (!$doctor && !$machine_plan && length($ENV{BEERPOWERS_CHARTER_SLOTS_JSON} // 
         for my $slot (sort keys %{$input->{$name}}) {
             my $value = $input->{$name}{$slot};
             die "Invalid charter slot $name/$slot\n" unless $charter_fields{$name}{$slot} &&
-                defined($value) && !ref($value) && $value =~ /\S/ && $value !~ /\x00|\{\{|<!--\s*\/?beerpowers:engine/;
+                defined($value) && !ref($value) && ($slot ne 'ROLES_TABLE' || $value =~ /\S/) && $value !~ /\x00/ &&
+                markdown_prose($value) !~ /\{\{|<!--\s*\/?beerpowers:engine/;
             $value =~ s/\s+\z//;
             $charter_notes{$name}{$slot} = encode('UTF-8', $value);
         }
@@ -413,6 +418,13 @@ sub render_sections {
     return $body;
 }
 my $roster_header = '| Роль | Проекты | Read on spawn |';
+my $full_roster_header = $roster_header . ' Миссия | Триггеры | Mandatory practices |';
+my %role_details = read_file("$Bin/../templates/charter/roster.md") =~ /^\| ([a-z-]+) \|( [^\r\n]+\|)[ \t]*\r?$/gm;
+sub default_roster {
+    my ($rows) = @_;
+    return join("\n", $full_roster_header, '|---|---|---|---|---|---|',
+        map { $rows->{$_} . ($role_details{$_} // ' | | |') } sort keys %$rows);
+}
 my $command_index_header = '| Файл | Что внутри | Кому |';
 sub trim_cell { return $_[0] =~ s/^[ \t]+|[ \t]+$//gr }
 sub table_cells {
@@ -437,9 +449,12 @@ sub edit_table_cell {
 sub roster_row {
     my ($role, @products) = @_;
     my $brief = $role eq 'implementer' && !-f agent_path($role) ? ".codex/roles/$role.md" : agent_path($role);
-    my @read = ("`$brief`", '`memory/MEMORY.md`', '`memory/project/domain-invariants.md`', '`memory/project/safety-rules.md`');
-    push @read, '`memory/project/project-map.md`' unless $role eq 'tester' || $role eq 'reviewer';
-    push @read, '`memory/tests/probes.md`' if $role eq 'tester';
+    my @read = ("`$brief`", '`memory/MEMORY.md`');
+    my @memory = qw(memory/project/domain-invariants.md memory/project/safety-rules.md);
+    push @memory, 'memory/project/project-map.md' unless $role eq 'tester' || $role eq 'reviewer';
+    push @memory, 'memory/tests/probes.md' if $role eq 'tester';
+    my %pending = map { $_->[0] => 1 } @changes;
+    push @read, map { "`$_`" } grep { -f $_ || $pending{$_} } @memory;
     push @read, '`memory/product-*.md` (если созданы)' if $role eq 'product';
     push @read, map { '`' . ($test_inputs{$_}{guide} // "memory/commands/$_.md") . '`' } @products;
     return "| `$role` | " . join(', ', @products) . ' | ' . join(', ', @read) . ' |';
@@ -453,7 +468,7 @@ sub roster_rows {
     return map { $_ => roster_row($_, @{$products{$_}}) } keys %products;
 }
 sub edit_setup_table {
-    my ($body, $header, $section, $edit) = @_;
+    my ($body, $header, $section, $edit, $column_names) = @_;
     my @required = map { trim_cell($_) } table_cells($header);
     my @lines = split /(?<=\n)/, $body;
     my $active = !defined $section;
@@ -484,6 +499,7 @@ sub edit_setup_table {
         my $end = $start;
         $end++ while $end <= $#lines && $lines[$end] =~ /^ {0,3}\|/;
         my $newline = $lines[$i] =~ /\r\n\z/ ? "\r\n" : "\n";
+        @$column_names = @columns if $column_names;
         my @next = $edit->($newline, [@positions{@required}], scalar(@columns), @lines[$start .. $end - 1]);
         $lines[$i + 1] .= $newline if @next && $lines[$i + 1] !~ /\n\z/;
         splice @lines, $start, $end - $start, @next;
@@ -491,6 +507,39 @@ sub edit_setup_table {
     }
     return undef;
 }
+sub generate_charter {
+    my ($name, $template, $slots, $overrides, $rosters, $ui, $existing) = @_;
+    my $archive = !defined($existing) ? safe_path(".claude/$name.md") : undef;
+    my $source = defined($archive) && -f $archive ? read_file($archive) : '';
+    my %input = (
+        file => $name, template => decode('UTF-8', $template), source => decode('UTF-8', $source),
+        rosters => $rosters, intake => $intake, ui => $ui ? JSON::PP::true : JSON::PP::false,
+        guides => {map { $_ => $test_inputs{$_}{guide} } grep { $test_inputs{$_}{guide} } @repos},
+        slots => {map { $_ => decode('UTF-8', $slots->{$_}) } keys %$slots},
+        overrides => {map { $_ => decode('UTF-8', $overrides->{$_}) } keys %$overrides},
+    );
+    if (defined $existing) {
+        $input{text} = decode('UTF-8', $existing);
+        $input{version} = $version;
+    }
+    my ($fh, $arg) = tempfile('beerpowers-charter-XXXXX', TMPDIR => 1, UNLINK => 1);
+    binmode $fh;
+    print {$fh} $json->encode(\%input);
+    close $fh or die "$arg: $!\n";
+    my $node = $ENV{BEERPOWERS_NODE} || 'node';
+    my $script = "$Bin/lib/charter.mjs";
+    if ($^O eq 'cygwin') {
+        $node = Cygwin::win_to_posix_path($node) if $node =~ /^[A-Za-z]:/;
+        ($script, $arg) = map { Cygwin::posix_to_win_path($_) } ($script, $arg);
+    }
+    open my $out, '-|', $node, $script, $arg or die "Node: $!\n";
+    binmode $out;
+    local $/;
+    my $rendered = <$out>;
+    close $out or die "Cannot render $name\n";
+    return $rendered;
+}
+
 my $charter_extra = '';
 my @charter_seed;
 for my $name (qw(team-charter team-lead)) {
@@ -729,6 +778,10 @@ if (!$shared_memory && !$doctor) {
 } elsif (!$shared_memory && $current_setup) {
     $index .= "\n" . engine_template('memory-index');
 }
+if ($shared_memory && -f $memory_index && !-d safe_path('memory/adr')
+        && markdown_prose(read_file($memory_index)) =~ /\]\((?:\.\/)?adr\/\)/) {
+    seed('memory/adr/.gitkeep', '', sub { 1 });
+}
 if (!$doctor && (%requested_index || %changed_guides)) {
     my $path = safe_path('memory/commands/README.md');
     if (-f $path) {
@@ -828,20 +881,28 @@ sub replace_setup_file {
     push @changes, [$path, read_file(safe_path($path)), $content, 'replace'];
 }
 
+sub retire_role_settings {
+    my ($path) = @_;
+    die "Unexpected retired configuration: $path\n" unless $path =~ m{\A\.codex/role-settings(?:/[\w.-]+)?\.json\z};
+    push @changes, [$path, read_file(safe_path($path)), '', 'delete'];
+}
+
 require "$Bin/role-packet.pl";
 my @configured = sort keys %existing_profiles;
 my %rosters;
 stage_six_setup("$Bin/..", $version, "projects/$repos[0]", $json, \@repos,
     @configured == 1 ? $configured[0] : undef, $roster_track, $default_track, $size, \%test_inputs, $doctor, $machine_plan,
-    $mode eq 'plan' && !$machine_plan, $label, \%rosters);
+    $mode eq 'plan' && !$machine_plan, $label, \%rosters,
+    $workspace_defaults{ui} // (ref($saved_workspace) eq 'HASH' ? $saved_workspace->{ui} : undef) // JSON::PP::false);
 for my $document (@charter_seed) {
     my ($path, $template, $slots) = @$document;
     if ($path eq '.codex/team-charter.md' && !$doctor) {
         my %planned = roster_rows(\%rosters);
         if (!-f $path) {
-            $slots->{ROLES_TABLE} //= join("\n", $roster_header, '|---|---|---|', @planned{sort keys %planned});
+            $slots->{ROLES_TABLE} //= default_roster(\%planned);
         } else {
             my $before = read_file($path);
+            my @column_names;
             my $after = edit_setup_table($before, $roster_header, '## Состав', sub {
                 my ($newline, $positions, $count, @rows) = @_;
                 my %missing = %planned;
@@ -879,12 +940,19 @@ for my $document (@charter_seed) {
                 $updated[-1] .= $newline if %missing && @updated && $updated[-1] !~ /\n\z/;
                 return (@updated, map {
                     my @values = map { trim_cell($_) } table_cells($missing{$_});
-                    fill_table_row([(' ') x $count], $positions, \@values) . $newline
+                    my $row = fill_table_row([(' ') x $count], $positions, \@values);
+                    $row = $missing{$_} . $role_details{$_}
+                        if '| ' . join(' | ', @column_names) . ' |' eq $full_roster_header && defined $role_details{$_};
+                    $row . $newline
                 } sort keys %missing);
-            });
-            if (!defined($after) && length($roster_track) &&
-                markdown_prose($before) =~ /^## Состав\r?\n(?:(?!^#{1,2} ).)*^\|/ms) {
-                push @errors, "$path: roster table needs unique columns Роль, Проекты and Read on spawn";
+            }, \@column_names);
+            if (!defined($after) && %planned) {
+                my $prose = markdown_prose($before);
+                if ($prose =~ /^## Состав[ \t]*$/m) {
+                    push @errors, "$path: roster table needs unique columns Роль, Проекты and Read on spawn";
+                } else {
+                    $charter_extra .= "\n## Состав\n\n" . default_roster(\%planned) . "\n";
+                }
             }
             if (defined($after) && $after ne $before) {
                 if (length $charter_extra) {
@@ -898,7 +966,26 @@ for my $document (@charter_seed) {
             }
         }
     }
-    seed($path, render_sections($template, $slots));
+    my ($name) = $path =~ m{/([^/]+)\.md$};
+    my $ui = $workspace_defaults{ui} || (ref($saved_workspace) eq 'HASH' && $saved_workspace->{ui});
+    if (!-f $path && !$doctor) {
+        my $rendered = generate_charter($name, $template, $slots, $charter_notes{$name} // {}, \%rosters, $ui);
+        $rendered = apply_lead_skill_header($rendered) if $name eq 'team-lead' && defined &apply_lead_skill_header;
+        seed($path, $rendered);
+    } elsif (!$doctor && !$machine_plan && $current_setup && -f $path) {
+        my ($pending) = grep { $_->[0] eq $path } @changes;
+        my $before = read_file($path);
+        my $text = !$pending ? $before : ($pending->[3] // '') eq 'replace' ? $pending->[2] : $before . $pending->[2];
+        my $full = read_file("$Bin/../templates/charter/$name.md");
+        $full =~ s/\r\n/\n/g;
+        my $refreshed = generate_charter($name, $full, $slots, {}, \%rosters, $ui, $text);
+        if ($refreshed ne $text) {
+            if ($pending) { @$pending = ($path, $before, $refreshed, 'replace') }
+            else { replace_setup_file($path, $refreshed) }
+        }
+    } else {
+        seed($path, '');
+    }
 }
 
 my $agents = safe_path('AGENTS.md');
@@ -944,6 +1031,20 @@ my %ignore = ("projects/$repo/probe" => '/projects/', "worktrees/BP-1/$repo/prob
 for my $file (qw(git-settings.local.json figma-settings.json yandex-tracker-settings.json)) {
     $ignore{".codex/$file"} = "/.codex/$file";
 }
+my $private_source = '.claude/git-settings.local.json';
+my $private_target = '.codex/git-settings.local.json';
+my $copy_private = 0;
+if (!$doctor && -e safe_path($private_source)) {
+    die "$private_source: expected an untracked regular file\n"
+        unless -f $private_source && !length git_output('ls-files', '--', $private_source);
+    $ignore{$private_source} = "/$private_source";
+    if (-e safe_path($private_target)) {
+        die "$private_target: conflict with existing local settings; both files preserved\n"
+            unless -f $private_target && read_file($private_target) eq read_file($private_source);
+    } else {
+        $copy_private = 1;
+    }
+}
 for my $dir (qw(figma screenshots tracker/task-attachment)) {
     $ignore{"memory/tasks/fix/test/$dir/probe"} = "/memory/tasks/**/$dir/";
 }
@@ -968,11 +1069,15 @@ for my $rule (sort values %ignore) {
 append_lines('.gitignore', join('', @rules)) if @rules;
 # The memory index and binding identify the old guide until the tables are updated.
 replace_setup_file($memory_index, $memory_relink) if defined $memory_relink;
+if (!$doctor) {
+    require "$Bin/lib/memory-links-migration.pl";
+    migrate_memory_links($Bin, \@changes);
+}
 replace_setup_file($workspace_file, $json->encode($saved_workspace)) if $guide_binding_changed;
 die join("\n", @errors) . "\n" if @errors;
 if ($packet) {
     die "Choose BEERPOWERS_REPO for role-packet: @repos\n" if @repos > 1 && !length($ENV{BEERPOWERS_REPO} // '');
-    role_packet(dirname($Bin), $repo, $test_inputs{$repo}{guide}, @ARGV); exit 0;
+    role_command(dirname($Bin), 'packet', $repo, $test_inputs{$repo}{guide}, @ARGV); exit 0;
 }
 if ($review || $handover || $feature) {
     my $code = $ARGV[0] // '';
@@ -1019,6 +1124,7 @@ if ($review) {
     exit 0;
 }
 if ($doctor) {
+    role_command(dirname($Bin), 'check', @repos);
     for my $hook (qw(setup teardown)) {
         my ($path) = grep { -f safe_path($_) } map { ".codex/bin/worktree-$hook$_" } ('.mjs', '', '.ps1');
         print "Worktree $hook hook: ", ($path // 'not configured'), "\n";
@@ -1030,20 +1136,22 @@ if ($doctor) {
     print "Project OK: $_\n" for @checks;
     exit 0;
 }
+@changes = ((grep { ($_->[3] // '') ne 'delete' } @changes), (grep { ($_->[3] // '') eq 'delete' } @changes));
 if ($machine_plan) {
     my @plan = map {
         my ($path, $before, $content, $replace) = @$_;
-        +{ path => $path, action => $replace ? 'UPDATE' : defined($before) ? 'APPEND' : 'CREATE',
+        +{ path => $path, action => ($replace // '') eq 'delete' ? 'DELETE' : $replace ? 'UPDATE' : defined($before) ? 'APPEND' : 'CREATE',
            content => encode_base64($content, '') };
     } @changes;
-    print STDOUT $json->encode({format => 1, changes => \@plan, @advisories ? (advisories => \@advisories) : ()});
+    print STDOUT $json->encode({format => 1, changes => \@plan, $copy_private ? (copyPrivateGit => JSON::PP::true) : (),
+        @advisories ? (advisories => \@advisories) : ()});
     exit 0;
 }
-unless (@changes) { print "No changes.\n"; exit 0 }
+unless (@changes || $copy_private) { print "No changes.\n"; exit 0 }
 
 for my $change (@changes) {
     my ($path, $before, $addition, $action) = @$change;
-    print ($action ? "UPDATE $path\n" : defined($before) ? "APPEND $path\n" : "CREATE $path\n");
+    print (($action // '') eq 'delete' ? "DELETE $path\n" : $action ? "UPDATE $path\n" : defined($before) ? "APPEND $path\n" : "CREATE $path\n");
     if ($mode eq 'plan') {
         $addition =~ s/^/+ /mg;
         print $addition;
@@ -1054,6 +1162,7 @@ for my $change (@changes) {
         open my $lock, '<', '.git/config' or die ".git/config: $!\n";
         flock $lock, LOCK_EX or die "Workspace busy\n";
         die "$path changed during setup; run plan again\n" unless read_file(safe_path($path)) eq $before;
+        if ($action eq 'delete') { unlink $path or die "$path: $!\n"; next }
         my ($fh, $tmp) = tempfile('beerpowers-settings-XXXXX', DIR => '.git', UNLINK => 1);
         binmode $fh; print {$fh} $addition or die "$tmp: $!\n"; close $fh or die "$tmp: $!\n";
         chmod((stat($path))[2] & 0777, $tmp) or die "$tmp: $!\n";
@@ -1072,4 +1181,19 @@ for my $change (@changes) {
     }
     print {$file} $addition or die "$path: $!\n";
     close $file or die "$path: $!\n";
+}
+
+if ($copy_private) {
+    print "COPY $private_target (local only)\n";
+    exit 0 if $mode eq 'plan';
+    my $cache = safe_path('.codex/.cache');
+    make_path($cache);
+    for my $path ($private_source, $private_target, "$cache/probe") {
+        system('git', 'check-ignore', '-q', '--', $path) == 0 or die "$path: expected an ignored file\n";
+    }
+    my ($file, $tmp) = tempfile('git-settings-XXXXX', DIR => $cache, UNLINK => 1);
+    binmode $file;
+    print {$file} read_file(safe_path($private_source)) or die "$tmp: $!\n";
+    close $file or die "$tmp: $!\n";
+    link($tmp, safe_path($private_target)) or die "$private_target: $!\n";
 }
