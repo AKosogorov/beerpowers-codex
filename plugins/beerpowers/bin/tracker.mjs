@@ -7,10 +7,12 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fingerprints} from './lib/tracker-attachments.mjs';
 import {read as readYandex} from './lib/yandex-tracker-read.mjs';
+import {issueKey} from './lib/yandex-tracker-api.mjs';
+import {branchName} from './lib/git-repositories.mjs';
 
 import { showHelp } from './lib/cli-help.mjs';
 
-showHelp('tracker.mjs adapters [read|write] | read|write OPERATION [ARGS...] | preview|sync KEY | cached|accept KEY DIGEST', ['adapters', 'read', 'write', 'preview', 'sync', 'cached', 'accept']);
+showHelp('tracker.mjs adapters [read|write] | read|write OPERATION [ARGS...] | mr-comments KEY TASK MR_URL yes|no < description.md | preview|sync KEY | cached|accept KEY DIGEST', ['adapters', 'read', 'write', 'mr-comments', 'preview', 'sync', 'cached', 'accept']);
 
 const root = fs.realpathSync('.');
 const hash = data => createHash('sha256').update(data).digest('hex');
@@ -24,6 +26,45 @@ function checked(relative) {
     if (stat && (stat.isSymbolicLink() || fs.realpathSync(base) !== base)) throw new Error('Unsafe tracker path: ' + relative);
   }
   return base;
+}
+
+// Намерение шага определяет тимлид по опубликованному MR. Заголовки внутри примеров кода
+// не делят раздел, а вложенные подзаголовки и относительные ссылки сохраняются дословно.
+function deploySection(description) {
+  let start, fence;
+  for (const line of description.matchAll(/[^\r\n]*(?:\r\n|\n|$)/g)) {
+    const content = line[0].replace(/\r?\n$/, '');
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(content)?.[1];
+    if (fence) {
+      if (marker?.startsWith(fence) && content.trim() === marker) fence = undefined;
+    } else if (marker) fence = marker;
+    else if (/^#{1,2}[ \t]+/.test(content)) {
+      if (start !== undefined) return description.slice(start, line.index).replace(/(?:\r?\n)+$/, '');
+      if (/^##[ \t]+Для выкладки на стенд[ \t]*$/.test(content)) start = line.index;
+    }
+  }
+  return start === undefined ? '' : description.slice(start).replace(/(?:\r?\n)+$/, '');
+}
+
+function mrComments(key, task, url, actions) {
+  if (!issueKey.test(key) || !['yes','no'].includes(actions)) throw Error('Expected issue key and deploy actions yes|no');
+  const mr = new URL(url);
+  if (mr.protocol !== 'https:' || mr.username || mr.password || !/\/(?:-\/merge_requests|pull)\/\d+\/?$/.test(mr.pathname))
+    throw Error('Expected the URL of the created MR or PR');
+  const id = hash(JSON.stringify([key, mr.origin, mr.pathname.replace(/\/$/, '')]));
+  const dir = 'memory/tasks/' + branchName(task, true);
+  const name = task.split('/').at(-1) + '-qa.html';
+  const qa = checked(dir + '/' + name);
+  const comments = [];
+  if (fs.statSync(qa,{throwIfNoEntry:false})?.isFile()) comments.push({
+    kind:'qa', request:'mr-' + id + '-qa', text:`[Чеклист приёмки](${dir}/${name})`, attachment:dir + '/' + name
+  });
+  if (actions === 'yes') {
+    const text = deploySection(fs.readFileSync(0,'utf8').replace(/^\uFEFF/, ''));
+    if (!/^##[^\r\n]+\r?\n\s*\S/.test(text)) throw Error('Missing deployment actions in the published MR description');
+    comments.push({kind:'deploy', request:'mr-' + id + '-deploy', text, verbatim:true});
+  }
+  return {comments};
 }
 
 function adapter(kind, selected = process.env.BEERPOWERS_TRACKER_ADAPTER) {
@@ -181,6 +222,8 @@ try {
   if (action === 'adapters' && args.length <= 1) {
     if (args.length && !['read','write'].includes(args[0])) throw new Error('Expected adapters [read|write]');
     console.log(JSON.stringify(adapter(args[0] ?? 'read').name));
+  } else if (action === 'mr-comments' && args.length === 4) {
+    console.log(JSON.stringify(mrComments(...args)));
   } else if (action === 'write' || action === 'read') {
     const provider = adapter(action);
     if (provider.file) console.log(JSON.stringify(invoke(provider.file,[action,...args])));

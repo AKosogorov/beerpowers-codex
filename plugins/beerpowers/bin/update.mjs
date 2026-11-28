@@ -189,7 +189,7 @@ function plan(previous) {
     doc.after = doc.after.slice(0, start) + stamp(to) + doc.after.slice(end);
     doc.actions.push('rollback charter stamp only');
   }
-  const setup = downgrade ? {changes:[], advisories:[]} : setupAdditions(root, pkg);
+  const setup = downgrade ? {changes:[], advisories:[]} : setupAdditions(root, pkg, previous);
   for (const {path, action, addition} of setup.changes) {
     const doc = document(path);
     if ((action === 'CREATE') !== (doc.after === null) || path === configPath) {

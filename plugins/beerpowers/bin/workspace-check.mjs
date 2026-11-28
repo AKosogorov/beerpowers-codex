@@ -434,7 +434,7 @@ export function checkWorkspace(root) {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  const usage = 'Запуск из корня workspace: node <пакет>/bin/workspace-check.mjs [--list]';
+  const usage = 'Запуск из корня workspace: node "$packageRoot/bin/workspace-check.mjs" [--list]';
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) console.log(usage);
   else if (args.length === 1 && args[0] === '--list') {
     for (const [id, name] of checks) console.log(`- ${id}: ${name}`);

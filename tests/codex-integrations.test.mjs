@@ -106,7 +106,7 @@ test('task-start selects a project tracker, caches its snapshot and accepts with
 });
 
 test('workspace.pl configures two repositories, previews and resumes the tracker task through the public route', async t => {
-  const { root, git, put, read, route, env, heads } = workspace(t);
+  const { root, git, put, read, route, node, env, heads } = workspace(t);
   const issue = { key, summary: 'Изменить карточку', description: 'Показать дату заказа.', status: { display: 'Открыта' } };
   let denied = false;
   const requests = [];
@@ -153,9 +153,10 @@ test('workspace.pl configures two repositories, previews and resumes the tracker
   assert.equal(git(web, 'branch', '--show-current'), key);
   const linked = path.join(root, 'worktrees', key, 'api');
   assert.equal(git(linked, 'branch', '--show-current'), key);
-  const recorded = JSON.parse(read(folder + '/checkouts.json')).repos;
+  assert(!fs.existsSync(path.join(root,folder,'checkouts.json')));
   for (const [name, base, checkout] of [['api','dev','worktrees/' + key + '/api'], ['web','main','projects/web']]) {
-    const row = recorded.find(r => r.name === name);
+    const row = JSON.parse((await node('git-workspace','resolve',key,name)).stdout);
+    assert(read(folder + '/preflight.md').includes('Base-SHA ' + name + ': ' + heads[name]));
     assert.equal(row.base, base);
     assert.equal(row.baseSha, heads[name]);
     assert.equal(row.checkout, checkout);
@@ -164,7 +165,7 @@ test('workspace.pl configures two repositories, previews and resumes the tracker
   const start = git(root, 'rev-parse', 'HEAD');
   assert.notEqual(start, before);
   const paths = git(root, 'diff', '--name-only', before, start).split(/\r?\n/);
-  for (const name of ['preflight.md', 'checkouts.json', 'tracker/task.md']) assert(paths.includes(folder + '/' + name), name);
+  for (const name of ['preflight.md', 'tracker/task.md']) assert(paths.includes(folder + '/' + name), name);
   assert(!paths.some(p => p.includes('task-attachment')));
   assert.match(read(folder + '/preflight.md'), /Показать дату заказа|tracker\/task\.md/);
   assert.equal(read(folder + '/tracker/task-attachment/sample.txt'), 'sample fixture');
@@ -189,6 +190,22 @@ test('workspace.pl configures two repositories, previews and resumes the tracker
   assert.equal(git(root, 'status', '--porcelain'), '');
   assert.equal(git(linked, 'rev-parse', 'HEAD'), heads.api);
   assert.equal(git(web, 'rev-parse', 'HEAD'), heads.web);
+  for (const [name,cwd] of [['api',linked],['web',web]]) {
+    const file = name + '-date.txt';
+    fs.writeFileSync(path.join(cwd,file),'2026-11-28\n');
+    git(cwd,'add',file);
+    git(cwd,'commit','-qm','date for ' + name);
+    env.BEERPOWERS_REPO = name;
+    const source = git(cwd,'rev-parse','HEAD');
+    git(cwd,'diff','--check',heads[name],source);
+    put(folder + '/repos/' + name + '/test-cases.md','Full run: ' + source + ' exit=0\n');
+    const result = await route('review-diff',key,heads[name],source);
+    assert(result.stdout.includes('Base: ' + heads[name]));
+    assert(result.stdout.includes('Source: ' + source));
+    const patch = /^Patch: (.+)$/m.exec(result.stdout)[1].trim();
+    assert(fs.readFileSync(patch,'utf8').includes('+++ b/' + file));
+    await assert.rejects(route('review-diff',key,heads[name === 'api' ? 'web' : 'api'],source),/Review base differs/);
+  }
 });
 
 test('layout-check separates a label edit from a measured change to button width', async t => {
@@ -214,4 +231,35 @@ test('layout-check separates a label edit from a measured change to button width
   put('projects/web/index.html', '<button id="buy" style="width: 260px">Pay</button>\n');
   await assert.rejects(node('layout-check', key, 'web'), err => err.code === 1 && /^fail  index\.html.*style/m.test(err.stdout));
   assert.equal(await width('after.jsonl'), 260);
+});
+
+test('fresh hook runs the charter layout command from each active package path', async t => {
+  const {temp,root,git,put,read,route,env} = workspace(t);
+  // UI-команда нужна в реально сгенерированном уставе.
+  env.BEERPOWERS_VIEWPORTS_JSON = JSON.stringify([{name:'desktop',width:1280,height:900,mobile:false}]);
+  await route('apply');
+  const charter = read('.codex/team-charter.md');
+  const cmd = /\x60(node "\$packageRoot\/bin\/layout-check\.mjs" <КОД> <репо>…)\x60/.exec(charter)?.[1];
+  assert.ok(cmd);
+  git(path.join(root,'projects/web'),'switch','-qc',key);
+  put('projects/web/label.txt','unit test\n');
+  const windows = process.platform === 'win32';
+  for (const version of ['1.0.0','1.0.1']) {
+    const pkg = path.join(temp,"BeerPowers Bob's cache",version);
+    fs.cpSync(path.resolve(bin,'..'),pkg,{recursive:true});
+    const manifest = path.join(pkg,'.codex-plugin/plugin.json');
+    fs.writeFileSync(manifest,JSON.stringify({...JSON.parse(fs.readFileSync(manifest,'utf8')),version}));
+    const hook = execFileSync(perl(),[path.join(pkg,'hooks/dispatch.pl')],{
+      cwd:root,env,encoding:'utf8',input:JSON.stringify({hook_event_name:'SessionStart',cwd:root}),
+    });
+    const ctx = JSON.parse(hook).hookSpecificOutput.additionalContext;
+    const assignment = ctx.split('\n').find(line => line.startsWith(windows ? '$packageRoot = ' : 'packageRoot='));
+    assert(assignment?.includes(version));
+    const source = assignment + '\n' + cmd.replace('<КОД>',key).replace('<репо>…','web');
+    const output = execFileSync(windows ? 'powershell.exe' : 'sh',
+      windows ? ['-NoProfile','-NonInteractive','-Command',source + '\nexit $LASTEXITCODE'] : ['-c',source],
+      {cwd:root,env,encoding:'utf8',windowsHide:true});
+    assert.match(output,/projects\/web/);
+    assert.equal(read('.codex/team-charter.md'),charter);
+  }
 });

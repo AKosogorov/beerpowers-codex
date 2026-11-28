@@ -5,7 +5,8 @@ import {createHash, randomUUID} from 'node:crypto'
 import {spawnSync} from 'node:child_process'
 import {fileURLToPath} from 'node:url'
 import {formatFlow} from './git-flow-format.mjs'
-import {branchName, checkedOut, discover, git, root, safe, taskData} from './lib/git-repositories.mjs'
+import {branchName, checkedOut, discover, git, root, safe, taskCheckout, taskData} from './lib/git-repositories.mjs'
+import {markupLines} from './lib/markdown-engine.mjs'
 
 import { showHelp } from './lib/cli-help.mjs';
 
@@ -100,18 +101,6 @@ function inspect(code,input,digests,preview) {
   return {code, data, before, file, tracker, ...brief}
 }
 
-function record(task, saved) {
-  const selected = task.repos.map(r => {
-    const old = saved.repos?.find(o=>o.name === r.name)
-    return {name:r.name,path:r.path,checkout:r.checkout,profile:r.profile,base:r.base,
-      baseSha:old?.base === r.base ? old.baseSha ?? r.baseSha : r.baseSha,target:r.target,override:r.override}
-  })
-  // A scoped re-entry may address one checkout of an existing multi-product task.
-  const byName = new Map((saved.repos ?? []).map(r => [r.name,r]))
-  for (const r of selected) byName.set(r.name,r)
-  return {code:task.code, dependencies:task.dependencies, repos:[...byName.values()]}
-}
-
 // The journal records only the intended task artifacts. Retry compares each
 // candidate with both its original and its prepared content before writing.
 function prepare(tasks, intake) {
@@ -119,7 +108,6 @@ function prepare(tasks, intake) {
   function add(file, content) { files[file] = {before:hash(text(file)),after:hash(content),content} }
   for (const task of tasks) {
     const i = intake.find(s=>s.code === task.code)
-    const saved = record(task,i.data.saved)
     if (!i.before && task.repos.some(r=>r.branchSha || r.existing))
       stop('Existing task branch without saved preflight: ' + task.code)
     for (const r of task.repos.filter(r=>!r.branchSha)) {
@@ -130,10 +118,24 @@ function prepare(tasks, intake) {
     }
     if (i.kind !== 'trivial' || i.tracker || task.repos.some(r=>r.override) || task.dependencies.length) {
       let body = i.body
-      if (!i.before && i.kind === 'feature') body += '\n' + saved.repos.map(r =>
-        (saved.repos.length === 1 ? 'Base-SHA: ' : 'Base-SHA ' + r.name + ': ') + r.baseSha).join('\n') + '\n'
+      const pins = new Map(i.data.pins)
+      if (pins.has(undefined)) {
+        const candidates = i.data.saved.repos ?? discover().filter(repo=>checkedOut(repo,task.code))
+        if (candidates.length !== 1) stop('Qualify the original Base-SHA with its project: ' + i.file)
+        const original = candidates[0]
+        if (task.repos.some(r=>r.name !== original.name)) {
+          const base = pins.get(undefined)
+          const line = [...markupLines(body)].find(row=>row.content === 'Base-SHA: ' + base)
+          body = body.slice(0,line.start) + 'Base-SHA ' + original.name + ': ' + base + body.slice(line.end)
+          pins.delete(undefined)
+          pins.set(original.name,base)
+        }
+      }
+      for (const r of task.repos) {
+        if (!pins.has(r.name) && !pins.has(undefined) && !i.data.saved.repos?.some(old=>old.name === r.name))
+          body += '\nBase-SHA ' + r.name + ': ' + r.baseSha + '\n'
+      }
       add(i.file,body)
-      add(i.data.dir + '/checkouts.json',JSON.stringify(saved,null,2) + '\n')
     }
     if (i.tracker && i.tracker.status !== 'unchanged') {
       trackers[task.code] = i.tracker.digest
@@ -166,12 +168,13 @@ function reportPlan(tasks) {
     console.log('Task: ' + t.code + ' · ' + r.name + '\nBase: ' + r.base + ' ' + r.baseSha + ' (' + r.profile + ')\nCheckout: ' + r.checkout + '\nTarget: ' + r.target)
 }
 
-function reportResume(intake) {
+function reportResume(intake, products) {
   for (const item of intake) {
     console.log('Resume existing ' + item.kind + ' task (read only).')
     for (const repo of item.data.saved.repos) {
-      const cwd = safe(repo.checkout)
-      console.log('Checkout: ' + repo.checkout + '\nSource: ' + git(cwd,['rev-parse','HEAD']) +
+      const checkout = checkedOut(products.find(p=>p.name === repo.name), item.code)
+      const cwd = safe(checkout)
+      console.log('Checkout: ' + checkout + '\nSource: ' + git(cwd,['rev-parse','HEAD']) +
         '\nStatus:\n' + (git(cwd,['status','--porcelain=v1','--untracked-files=all']) || '(clean)'))
       for (const folder of [item.data.dir,item.data.dir + '/repos/' + repo.name]) {
         for (const name of ['handover.md','feature-state.json','test-cases.md','review-report.md']) {
@@ -215,9 +218,12 @@ function main() {
     if (preview) { console.log('Preview only.'); return }
     const products = discover()
     const resumed = intake.every(i => i.before !== null && i.before === i.body && i.data.saved.repos?.length &&
-      i.data.saved.repos.every(r=>{ const p=products.find(p=>p.name===r.name); return p && checkedOut(p,i.code) === r.checkout }))
+      i.data.saved.repos.every(r=>{
+        const p = products.find(p=>p.name === r.name)
+        return p && taskCheckout(p,i.code,r,r.baseSha)
+      }))
     if (resumed && args.length === codes.length && args.every((v,n)=>v===codes[n]) && !process.env.BEERPOWERS_GIT_TASKS) {
-      reportResume(intake)
+      reportResume(intake,products)
       return
     }
     const plan = adapter('git-workspace',['task-plan',...args])
@@ -229,7 +235,7 @@ function main() {
     const artifacts = prepare(tasks,intake)
     const changed = Object.entries(artifacts.files).some(([,f])=>f.before !== f.after)
     if (resumed && !changed && tasks.every(t=>t.repos.every(r=>r.existing)) && !args.some(a=>a.startsWith('--'))) {
-      reportResume(intake); return
+      reportResume(intake,products); return
     }
     if (status().length) stop('Busy outer workspace; reconcile files before preparing a task')
     if (mode === 'task-plan') return

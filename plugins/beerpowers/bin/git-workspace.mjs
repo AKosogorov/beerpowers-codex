@@ -7,16 +7,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cleanupTaskCode, cleanupInventory } from './lib/cleanup-paths.mjs';
 import { runProjectHook as invokeHook } from './lib/project-worktree-hooks.mjs';
 import { root, safe, fail, git, branchName, discover, remoteState, profileDetails, proposeProfile, taskData,
-  worktrees, checkedOut, localSha, resolveLocal, mergeEvidence, fetchBranch } from './lib/git-repositories.mjs';
+  worktrees, checkedOut, taskCheckout, localSha, resolveLocal, mergeEvidence, fetchBranch } from './lib/git-repositories.mjs';
 
 import { showHelp } from './lib/cli-help.mjs';
 
 showHelp(`git-workspace.mjs setup|doctor|profiles
 git-workspace.mjs resolve TASK REPO
+git-workspace.mjs task-checkout TASK [REPO]
 git-workspace.mjs merged TASK [--repo REPO]
 git-workspace.mjs task-plan|task-start TASK... [--repo REPO] [--worktree] [--copy-env] [--no-deps] [-- HOOK_ARGS...]
 git-workspace.mjs worktrees-clear [TASK...] [--force] [--apply --confirm HASH]`,
-  ['setup', 'doctor', 'profiles', 'resolve', 'merged', 'task-plan', 'task-start', 'worktrees-clear']);
+  ['setup', 'doctor', 'profiles', 'resolve', 'task-checkout', 'merged', 'task-plan', 'task-start', 'worktrees-clear']);
 
 const [command, ...args] = process.argv.slice(2);
 const options = { codes: [], repo: [], flags: [], copyEnv: false, noDeps: false, worktree: false, apply: false };
@@ -148,9 +149,12 @@ function plan(repos) {
       }
       const previous = tasks.flatMap(t => t.repos.map(r => ({ code: t.code, repo: r })))
         .find(t => t.code === base && t.repo.name === repo.name);
-      const baseSha = state.heads.get(base) || localSha(repo, 'refs/heads/' + base) || previous?.repo.baseSha;
-      if (!baseSha) fail('Missing base ' + base + ' in ' + repo.name);
-      const existing = checkedOut(repo, code);
+      const baseTip = state.heads.get(base) || localSha(repo, 'refs/heads/' + base) || previous?.repo.baseSha;
+      if (!baseTip) fail('Missing base ' + base + ' in ' + repo.name);
+      const saved = data.saved.repos?.find(r => r.name === repo.name);
+      const pinned = data.pins.get(repo.name) ?? data.pins.get(undefined) ?? saved?.baseSha;
+      const existing = taskCheckout(repo, code, saved, pinned);
+      const baseSha = pinned ?? baseTip;
       if (existing === repo.path && options.worktree) fail('Task branch already in product checkout: ' + repo.path);
       const taskTree = 'worktrees/' + code + '/' + repo.name;
       const free = !occupied.has(repo.name) && projectFree(repo, state);
@@ -166,7 +170,7 @@ function plan(repos) {
           if (l === r || l.startsWith(r + '/') || r.startsWith(l + '/')) fail('Conflicting task ref: ' + other);
         }
       }
-      task.repos.push({ ...repo, ...details, checkout, base, baseSha, target: base,
+      task.repos.push({ ...repo, ...details, checkout, base, baseSha, baseTip, target: base,
         releaseMode: data.rows.get(repo.name)?.releaseMode || (repo.profile === 'dev-default' ? 'плановый' : null),
         existing: Boolean(existing), branchSha: localTask || state.heads.get(code) || null,
         baseOnOrigin: state.heads.has(base), taskOnOrigin: state.heads.has(code),
@@ -199,7 +203,7 @@ function start(task) {
     const code = task.code;
     const existing = checkedOut(r, code);
     if (!existing) {
-      if (r.baseOnOrigin && fetchBranch(r, r.base) !== r.baseSha) fail('Base moved; replan ' + code);
+      if (r.baseOnOrigin && fetchBranch(r, r.base) !== r.baseTip) fail('Base moved; replan ' + code);
       const localTask = localSha(r, 'refs/heads/' + code);
       if (!localTask && r.taskOnOrigin && fetchBranch(r, code) !== r.branchSha) fail('Remote task changed; replan ' + code);
       const startSha = r.branchSha || r.baseSha;
@@ -214,6 +218,9 @@ function start(task) {
       }
     }
     if (checkedOut(r, code) !== r.checkout) fail('Task checkout changed: ' + r.checkout);
+    // Клоны с вручную добавленным origin могут ещё не знать его HEAD локально.
+    if (r.base === r.defaultBranch && !git(abs, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], true))
+      git(abs, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/' + r.defaultBranch]);
     prepare(r, code, !existing);
   }
 }
@@ -433,6 +440,19 @@ function main() {
   if (command === 'setup' || command === 'doctor') return { repos };
   if (command === 'profiles') return { repos: repos.map(proposeProfile) };
   if (command === 'resolve' && options.codes.length === 2) return resolveLocal(repoByName(repos, options.codes[1]), options.codes[0]);
+  if (command === 'task-checkout' && [1,2].includes(options.codes.length)) {
+    const [code, selected] = options.codes;
+    const {saved, pins} = taskData(code);
+    const scope = saved.repos ?? repos;
+    const name = selected || (scope.length === 1 && scope[0].name);
+    if (!name || !scope.some(r => r.name === name)) fail('Choose BEERPOWERS_REPO for ' + code);
+    const repo = repoByName(repos, name);
+    const record = saved.repos?.find(r => r.name === name);
+    const baseSha = pins.get(name) ?? pins.get(undefined) ?? record?.baseSha;
+    const checkout = taskCheckout(repo, code, record, baseSha);
+    if (!checkout) fail('Task branch not checked out: ' + code + ' in ' + name);
+    return {name, checkout, multi:scope.length > 1 && Boolean(saved.repos), baseSha};
+  }
   if (command === 'merged' && options.codes.length === 1) {
     const code = branchName(options.codes[0], true);
     const data = taskData(code);

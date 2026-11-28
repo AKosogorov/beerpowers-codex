@@ -124,6 +124,10 @@ test('Git product flow, busy checkout, local bare origins, confirmed cleanup', t
   git(api, 'push', '-q', 'origin', 'dev');
   assert.notEqual(git(api, 'rev-parse', 'refs/remotes/origin/dev'), forced.baseSha);
   assert.equal(run(['resolve', 'PRJ-3', 'api']).baseSha, forced.baseSha, 'review resolves recorded task base');
+  fs.unlinkSync(path.join(root,'memory/tasks/PRJ-3/checkouts.json'));
+  put('memory/tasks/PRJ-3/preflight.md', 'Base-SHA api: ' + forced.baseSha + '\n');
+  assert.equal(run(['resolve', 'PRJ-3', 'api']).baseSha, forced.baseSha, 'current preflight pins the same base');
+  assert.equal(run(['task-plan', 'PRJ-3']).tasks[0].repos[0].baseSha, forced.baseSha, 're-entry cannot move the review base');
   put('projects/api/unfinished', 'preserve\n');
   const busy = run(['task-start', 'PRJ-4', '--repo', 'api']).tasks[0].repos[0];
   assert.equal(busy.checkout, 'worktrees/PRJ-4/api');

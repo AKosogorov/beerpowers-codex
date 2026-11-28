@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { readCharter } from '../plugins/beerpowers/bin/lib/role-context.mjs';
-import { blocks } from '../plugins/beerpowers/bin/lib/markdown-engine.mjs';
+import { blocks, engineBody } from '../plugins/beerpowers/bin/lib/markdown-engine.mjs';
 import { parseFrontmatter } from '../plugins/beerpowers/bin/lib/role-metadata.mjs';
 import { refreshRole } from '../plugins/beerpowers/bin/lib/role-setup.mjs';
 import { fileURLToPath } from 'node:url';
@@ -454,6 +454,9 @@ test('changing a saved guide updates generated pointers and preserves edited tab
   f.put('projects/demo/Makefile', 'check:\n\t@echo fixture\n');
   const options = {BEERPOWERS_TESTS_JSON:JSON.stringify({demo:{guide, command:'make check', source:'Makefile'}})};
   const before = [memory, commands, charter].map(f.read);
+  const lead = f.read('.codex/team-lead.md');
+  assert.ok(lead.includes('[индекса команд](../memory/commands/README.md)'));
+  assert.ok(!lead.includes('Команды обязательных проверок'));
   const plan = f.setup('plan', undefined, options);
   for (const file of [memory, commands, charter, gates]) assert.ok(plan.includes('UPDATE ' + file), file);
   const [index, commandIndex, roster] = before;
@@ -463,6 +466,7 @@ test('changing a saved guide updates generated pointers and preserves edited tab
   const updatedGates = customGate + previousGate.replace('git diff --check', 'make check');
   assert.equal(f.read(gates), updatedGates);
   assert.equal(f.read(charter), roster.replaceAll('`memory/commands/demo.md`', '`memory/commands/api.md`'));
+  assert.equal(f.read('.codex/team-lead.md'), lead);
   assert.match(f.packet('tester'), /FILE memory\/commands\/api\.md sha256=/);
   assert.match(f.setup('apply', undefined, options), /^No changes\.$/m);
   assert.deepEqual(f.update().changes, []);
@@ -570,7 +574,7 @@ test('PM-only setup delivers project identity, confirmed slots and table rows fo
   assert.match(charter, /Draft через Approved и In Development до Done/);
   const memory = readMarkdown('memory/MEMORY.md');
   assert.match(memory, /^# Память команды Каталог заказов$/m);
-  assert.match(memory, /коммитится отдельно от всего остального.*\n\| `Проверяй экраны заказов`/);
+  assert.match(memory, /коммитится отдельно от всего остального.*\n<!-- \/beerpowers:engine -->\n\n\| Маркер \| Владелец \|\n\|---\|---\|\n\| `Проверяй экраны заказов`/);
   assert.match(readMarkdown('memory/commands/README.md'), /\| Файл \| Что внутри \| Кому \|[\s\S]*\| \[lint\.md\]\(lint\.md\) \| Проверка стиля \| frontend \|/);
   assert.equal(readMarkdown('memory/commands/lint.md'), '# Линт\n');
   assert.match(readMarkdown('memory/project/domain-invariants.md'), /При setup не выявлены\./);
@@ -777,6 +781,22 @@ test('economy leaves unknown, long and gated phases separate and protects indepe
   for (const risk of ['invariant', 'critical', 'largeDiff', 'sharedComponent', 'independentReview']) {
     assert.equal(decide({...lowRisk, [risk]:true}).reviewBy, 'reviewer');
   }
+});
+
+test('doctor diagnoses stripped safety boundaries and repeated setup restores only the owned text', t => {
+  const f = fixture(t), path = 'memory/project/safety-rules.md';
+  f.setup('apply');
+  const doc = f.read(path).replaceAll('\r\n', '\n'), known = blocks(doc, path);
+  const never = known.get('never-generic'), confirm = known.get('confirm-generic');
+  const expected = doc.replace(never.text, never.text + '\n\nРучной абзац команды между блоками.  ');
+  f.put(path, expected.replace(never.text, engineBody(never)).replace(confirm.text, engineBody(confirm)));
+  assert.throws(() => f.setup('doctor'), /Утрачены границы/);
+  assert.match(f.setup('plan'), /UPDATE memory\/project\/safety-rules.md/);
+  f.setup('apply');
+  assert.equal(f.read(path), expected);
+  f.setup('doctor');
+  assert.match(f.setup('apply'), /No changes\./);
+  assert.deepEqual(f.update().changes, []);
 });
 
 for (const track of [undefined, 'pm', 'both']) {

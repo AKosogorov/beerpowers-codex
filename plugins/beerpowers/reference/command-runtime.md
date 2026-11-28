@@ -37,7 +37,7 @@ if ($manifest.name -cne 'beerpowers-codex' -or -not $manifest.version -or
 
 ## Запуск обработчика
 
-Запускай обработчик из проверенного пакета с рабочим каталогом во внешнем workspace. Для JavaScript используй [выбор Node](node-runtime.md "beerpowers:reference/node-runtime.md"). В новых вызовах оболочки переменные нужно задать заново.
+Запускай обработчик из корня внешнего workspace. При старте чата и роли хук установленного пакета передаёт в контекст строку присваивания `packageRoot` для PowerShell в Windows или POSIX shell в Unix. Агент вставляет строку перед командой в том же вызове оболочки, например `node "$packageRoot/bin/layout-check.mjs" TASK-7 frontend`. Значение определяет каталог загруженного хука. При следующем старте после обновления хук передаст путь новой версии. Если хуки отключены, возьми корень выбранного навыка по диагностике выше. Для JavaScript используй [выбор Node](node-runtime.md "beerpowers:reference/node-runtime.md").
 
 Для Windows используй Perl, поставляемый с Git for Windows. Задай `$packageRoot` точным путём к проверенному пакету, затем в том же вызове PowerShell выполни подготовку ниже и команду из обработчика:
 

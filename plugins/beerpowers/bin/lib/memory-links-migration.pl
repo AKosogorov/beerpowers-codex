@@ -47,7 +47,6 @@ sub migrate_memory_links {
     for my $file (sort keys %docs) {
         next unless $file =~ /\.md\z/ && $file !~ m{^memory/tasks/.*?/(?:tracker|screenshots|figma)/} &&
             $file !~ m{(?:^|/)feedback_[^/]*\.md$};
-        next if $file eq 'memory/tech-debt/tech-debt.md';
         next unless -f safe_path($file);
         my $before = read_file($file);
         my $change = $pending{$file};
@@ -63,6 +62,19 @@ sub migrate_memory_links {
                 next;
             }
             unless ($historical) {
+                # Меняем только известные команды пакета. Локальные Claude-скрипты
+                # проекта и команды из архивных отчётов сохраняют свои адреса.
+                $lines[$i] =~ s{\x60node (?:\.claude|<пакет>)/bin/([\w-]+\.mjs)(?=[\s\x60])}{
+                    -f "$bin/$1" ? "\x60node \"\$packageRoot/bin/$1\"" : $&
+                }ge;
+                $lines[$i] =~ s{\x60(?:\.claude/bin/workspace-clean|"\$packageRoot/bin/workspace-clean")(?=[\s\x60])}{`node "\$packageRoot/bin/workspace-clean"}g;
+                $lines[$i] =~ s{\x60\.claude/bin/figma-export(?= )}{`node "\$packageRoot/bin/figma-export.mjs"}g;
+                $lines[$i] =~ s{\x60\.claude/bin/yandex-tracker (\S+) --comments --save memory/tasks/\1/tracker\x60}{`node "\$packageRoot/bin/tracker.mjs" sync $1`}g;
+                if ($file eq 'memory/tech-debt/tech-debt.md') {
+                    $lines[$i] =~ s{скриптом \.claude/bin/tech-debt-index\.mjs}{скриптом tech-debt-index.mjs из установленного BeerPowers};
+                    $lines[$i] =~ s{^тот же скрипт с `--check`\. Правки руками здесь затираются\.}{`node "\$packageRoot/bin/workspace-check.mjs"`. Текст вне управляемой таблицы сохраняется.};
+                    next;
+                }
                 my $name = qr{reference/(?:[\w-]+/)*[\w-]+\.md};
                 # Только самостоятельный адрес пакета или явная пометка о поставке.
                 $lines[$i] =~ s{\]\((?:\$packageRoot/|beerpowers:)($name)(\#[^\s)]*)?\)}{

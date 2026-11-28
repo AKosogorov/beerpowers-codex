@@ -8,11 +8,11 @@ import { parseArgs } from 'node:util';
 import { cleanupName, cleanupTaskCode, cleanupInventory, hasBareGitLayout } from './lib/cleanup-paths.mjs';
 
 const usage = `Использование из корня workspace
-  node <пакет>/bin/workspace-clean worktree <код> [--orphan] [--merged-anyway]
-  node <пакет>/bin/workspace-clean orphans
-  node <пакет>/bin/workspace-clean output [<код> | <репозиторий>]
-  node <пакет>/bin/workspace-clean task <код>
-  node <пакет>/bin/workspace-clean cache
+  node "$packageRoot/bin/workspace-clean" worktree <код> [--orphan] [--merged-anyway]
+  node "$packageRoot/bin/workspace-clean" orphans
+  node "$packageRoot/bin/workspace-clean" output [<код> | <репозиторий>]
+  node "$packageRoot/bin/workspace-clean" task <код>
+  node "$packageRoot/bin/workspace-clean" cache
 
 Без --apply команда показывает план. Уборка кеша входит в каждый вызов,
 если не передан --no-cache. Срок хранения задаёт --keep-days (по умолчанию 7).

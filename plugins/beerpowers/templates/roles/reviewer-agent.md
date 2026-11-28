@@ -68,7 +68,7 @@ skills: [{{ROLE_SKILLS}}]
 
 <!-- beerpowers:engine diff-base -->
 **База для диффа** — charter, «База для диффа»: команда диффа — из ответа
-`node <пакет>/bin/git-workspace.mjs resolve <КОД> <репо>`, по каждому репозиторию задачи. Что добавляет
+`node "$packageRoot/bin/git-workspace.mjs" resolve <КОД> <репо>`, по каждому репозиторию задачи. Что добавляет
 эта роль:
 
 - Базу не выводи сам из названия ветки или из привычного `master`: взял не ту — в дифф

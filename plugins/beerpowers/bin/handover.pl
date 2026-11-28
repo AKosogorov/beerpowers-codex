@@ -5,20 +5,6 @@ use Fcntl qw(:flock);
 use Digest::SHA qw(sha256_hex);
 use File::Path qw(make_path);
 
-# Older tasks and single-product tasks keep their original evidence layout.
-# workspace.pl has already verified the checkout against Git's worktree list.
-sub product_evidence {
-    my ($task, $product) = @_;
-    my $file = task_path("$task/checkouts.json");
-    return ($task, undef) unless -f $file;
-    my $records = parse_json(read_file($file))->{repos};
-    die "Expected task products in $file\n" unless ref($records) eq 'ARRAY' && @$records;
-    my ($name) = $product =~ m{/([^/]+)\z};
-    my @matches = grep { ($_->{name} // '') eq $name && ($_->{checkout} // '') eq $product } @$records;
-    die "Task checkout mismatch in $file\n" unless @matches == 1;
-    return (@$records > 1 ? task_path("$task/repos/$name") : $task, $matches[0]);
-}
-
 sub handover_bytes {
     my ($path) = @_;
     task_path($path);

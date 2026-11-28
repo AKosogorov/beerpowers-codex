@@ -1,12 +1,17 @@
 // Переносит проектные вставки между заголовками и именованными блоками устава.
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { blocks, markupLines } from './markdown-engine.mjs';
+import { blocks, knownBlock, markupLines, restoreBoundaries } from './markdown-engine.mjs';
 import { isClaudeModel } from './role-metadata.mjs';
 import { referenceFiles, referenceNamespace } from './role-references.mjs';
 
 const asset = name => readFileSync(new URL('../../templates/charter/' + name, import.meta.url), 'utf8').replaceAll('\r\n','\n');
 const quote = value => '\x60' + value + '\x60';
+const archiveBuildRule = '**Сборка — единственный гейт CI.** На MR в каждом репозитории CI гоняет только `npm run build`,\n' +
+  'поэтому локальная сборка затронутого репозитория обязательна до push: у фронта и CMS других\n' +
+  'автоматических проверок нет, у фронта типы проверяются только внутри `build`.';
+const oldBuildRule = 'Локальная сборка каждого затронутого репозитория обязательна до push. Наличие и состав проверок CI по репозиториям приведены в таблице «Стек (фиксированный)» устава. Выполни также локальные гейты из раздела «Гейты» памятки каждого изменённого проекта.';
+const buildRule = 'До push исполнитель собирает каждый затронутый репозиторий. Состав CI указан в таблице «Стек (фиксированный)» устава.';
 const intakeDescriptions = {
   plan:'**План вместе, дальше сами.** Архитектор готовит design brief для задачи крупнее мелкой правки. Пользователь утверждает план. Реализация, тесты и ревью идут до готового MR с остановкой на необратимой развилке.',
   stages:'**Стоп после каждого этапа.** Пользователь утверждает design brief. После реализации, тестов и ревью тимлид показывает результат и ждёт согласия продолжать.',
@@ -69,7 +74,7 @@ function adaptProse(text) {
       const {repository} = JSON.parse(readFileSync(new URL('../../.codex-plugin/plugin.json', import.meta.url), 'utf8'));
       return '](' + repository + '/blob/main/plugins/beerpowers/reference/' + name + fragment + ' "' + label + '")';
     })
-    .replaceAll('.claude/bin/', '<пакет>/bin/').replace(/\.claude\/(?!reference\/)/g, '.codex/');
+    .replace(/(?:node )?\.claude\/bin\/([\w.-]+)/g, 'node "$packageRoot/bin/$1"').replace(/\.claude\/(?!reference\/)/g, '.codex/');
   for (const line of [...markupLines(text)].reverse()) {
     text = text.slice(0,line.start) + replacements(line.content) + text.slice(line.end);
   }
@@ -194,7 +199,7 @@ function insertExtras(text, file, extra) {
   return text;
 }
 
-export function renderCharter({file,template,slots,overrides={},source='',rosters={},guides={},ui=false,intake='',priorBlocks}) {
+export function renderCharter({file,template,slots,overrides={},source='',rosters={},ui=false,intake='',priorBlocks}) {
   const active = new Set(Object.values(rosters).flat());
   // При первом setup source приходит из .claude. Обновление Codex передаёт свои priorBlocks.
   const sourceBlocks = priorBlocks ?? (source ? blocks(asset('claude-source/' + file + '.txt'), file) : undefined);
@@ -216,13 +221,8 @@ export function renderCharter({file,template,slots,overrides={},source='',roster
       return active.has(role) || role === 'независимый оппонент';
     }).join('\n');
   }
-  if (file === 'team-lead' && fields.GATES_EXTRA?.includes('**Сборка — единственный гейт CI.** На MR в каждом репозитории CI гоняет только')) {
-    fields.GATES_EXTRA = fields.GATES_EXTRA.replace(/\*\*Сборка — единственный гейт CI\.\*\* На MR в каждом репозитории CI гоняет только [\s\S]*?только внутри \x60build\x60\./,
-      'Локальная сборка каждого затронутого репозитория обязательна до push. Наличие и состав проверок CI по репозиториям приведены в таблице «Стек (фиксированный)» устава. Выполни также локальные гейты из раздела «Гейты» памятки каждого изменённого проекта.');
-  }
-  if (file === 'team-lead' && Object.keys(guides).length) {
-    const rows = Object.entries(guides).map(([repo,guide]) => '| ' + quote(repo) + ' | ' + quote(guide) + ', раздел «Гейты» |');
-    fields.GATES_EXTRA = [fields.GATES_EXTRA, ['| Проект | Команды обязательных проверок |','|---|---|',...rows].join('\n')].filter(Boolean).join('\n\n');
+  if (file === 'team-lead' && fields.GATES_EXTRA) {
+    fields.GATES_EXTRA = fields.GATES_EXTRA.replace(archiveBuildRule, buildRule);
   }
   let result = insertExtras(template, file, extra);
   for (const block of [...blocks(result,file).values()].reverse()) {
@@ -238,14 +238,15 @@ export function renderCharter({file,template,slots,overrides={},source='',roster
 
 // У существующего документа владелец всего текста за границами маркеров — проект.
 // Для выпусков с сокращённым шаблоном извлекаются его слоты до восстановления структуры.
-export function refreshCharter({file,text,template,prior,ui,version,rosters={},guides={}}) {
+export function refreshCharter({file,text,template,prior,ui,version,rosters={}}) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const line = str => str.replaceAll('\n',eol);
   const plain = str => str.replaceAll('\r\n','\n');
   if (file === 'team-charter') text = nativeModelTable(text);
   const expected = blocks(template,file);
-  const existing = blocks(text,file);
   const historic = prior ? blocks(plain(prior),file) : new Map();
+  text = restoreBoundaries(text, file, expected, historic);
+  const existing = blocks(text,file);
   const intro = file === 'team-charter' ? 'charter-intro' : 'lead-intro';
   if (!existing.has(intro) && !existing.has(file === 'team-charter' ? 'intake' : 'effort-questions')) {
     const headings = new Set(anchors(text,file).map(row => row.key));
@@ -258,7 +259,7 @@ export function refreshCharter({file,text,template,prior,ui,version,rosters={},g
     const source = plain(text);
     const dev = [...markupLines(source)].find(row => row.content === '## Команда разработки');
     if (dev) template += '\n{{DEV_SECTION}}\n';
-    return line(renderCharter({file,template:template.replace(/^# .*$/m,() => title), source, ui, rosters,guides,priorBlocks:historic,
+    return line(renderCharter({file,template:template.replace(/^# .*$/m,() => title), source, ui, rosters,priorBlocks:historic,
       slots:{BEERPOWERS_VERSION:stamp}}));
   }
   for (const [name,canonical] of expected) {
@@ -267,7 +268,7 @@ export function refreshCharter({file,text,template,prior,ui,version,rosters={},g
     if (found) {
       const current = plain(found.text);
       if (enabled && canonical.text === current) continue;
-      if (current !== canonical.text && historic.get(name)?.text !== current) throw Error('Conflict ' + file + ' [' + name + ']: изменён управляемый блок');
+      if (current !== canonical.text && historic.get(name)?.text !== current && !knownBlock(file, found, canonical)) throw Error('Conflict ' + file + ' [' + name + ']: изменён управляемый блок');
       const after = text.slice(found.end);
       const suffix = !enabled && after.startsWith(eol + eol) ? after.slice(eol.length * 2) : after;
       text = text.slice(0,found.start) + (enabled ? line(canonical.text) : '') + suffix;
@@ -279,16 +280,22 @@ export function refreshCharter({file,text,template,prior,ui,version,rosters={},g
       text = text.slice(0,offset) + gap + line(canonical.text) + eol + eol + text.slice(offset);
     }
   }
-  if (file === 'team-lead' && Object.keys(guides).length) {
-    let table = false;
-    const updates = [];
-    for (const row of markupLines(text)) {
-      if (row.content === '| Проект | Команды обязательных проверок |') { table = true; continue; }
-      if (!row.content.startsWith('|')) table = false;
-      const match = table && /^\| \x60([\w.-]+)\x60 \| \x60(memory\/commands\/[\w.-]+\.md)\x60, раздел «Гейты» \|$/.exec(row.content);
-      if (match && guides[match[1]] && match[2] !== guides[match[1]]) updates.push({...row,value:row.content.replace(match[2],guides[match[1]])});
+  if (file === 'team-lead') {
+    // 0.12.0 добавляла эту таблицу после проектных дополнений к гейтам.
+    // Удаляем только точную форму сгенерированного Markdown в исходном слоте.
+    const boundaries = anchors(text,file);
+    const gate = boundaries.findIndex(row => row.key === 'gates');
+    if (gate >= 0) {
+      const start = boundaries[gate].end, end = boundaries[gate + 1]?.start ?? text.length;
+      let slot = text.slice(start,end);
+      for (const row of [...markupLines(slot)].reverse()) {
+        if (row.content === oldBuildRule) slot = slot.slice(0,row.start) + buildRule + slot.slice(row.end);
+        if (row.content !== '| Проект | Команды обязательных проверок |') continue;
+        const table = /^(?:\| Проект \| Команды обязательных проверок \|\r?\n\|---\|---\|)(?:\r?\n\| \x60[\w.-]+\x60 \| \x60memory\/commands\/[\w.-]+\.md\x60, раздел «Гейты» \|)+(?=\r?\n(?!\|)|$)/.exec(slot.slice(row.start));
+        if (table) slot = slot.slice(0,row.start) + slot.slice(row.start + table[0].length).replace(/^(?:\r?\n){1,2}/,'');
+      }
+      text = text.slice(0,start) + slot + text.slice(end);
     }
-    for (const row of updates.reverse()) text = text.slice(0,row.start) + row.value + text.slice(row.end);
   }
   return upgradePmLink(text);
 }

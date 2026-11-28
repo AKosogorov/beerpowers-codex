@@ -18,6 +18,9 @@ export function spawnArguments(packet, task, values, inventory, root) {
   if (skipped.some(name => !packet.missing.includes(name))) throw Error('--without-skill указывает навык вне списка недоступных');
   const model = values.model ?? models.get(packet.role) ?? fields.model;
   const reasoning_effort = values.effort;
+  if (inventory == null) {
+    throw Error('Нет BEERPOWERS_SESSION_MODELS_JSON: передай модели и уровни из схемы collaboration.spawn_agent текущего чата');
+  }
   if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory) ||
       !Object.hasOwn(inventory, model) || !Array.isArray(inventory[model]) || !inventory[model].includes(reasoning_effort)) {
     throw Error('Схема текущего spawn_agent не подтверждает сочетание ' + model + ' / ' + reasoning_effort);
@@ -30,6 +33,10 @@ export function spawnArguments(packet, task, values, inventory, root) {
     'Верни прочитанные источники, конкретное правило, результат и блокеры. Разрешённые операции: ' + fields.tools.join(', '),
     packet.body].join('\n\n');
   const limitations = [];
+  if (['backend','database','devops','frontend'].includes(packet.role)) {
+    limitations.push('Если поручена реализация, выполни применимые локальные гейты своих изменений по памятке проекта. ' +
+      'До передачи тимлиду укажи каталог запуска, точную команду, проверенную ревизию (HEAD и diff при незакоммиченных изменениях), код выхода и результат.');
+  }
   if (skipped.length) limitations.push('Тимлид явно согласовал работу без навыков: ' + skipped.join(', '));
   const browser = fields.tools.filter(tool => /^mcp__(?:Claude_Browser|claude-in-chrome)__/.test(tool));
   if (browser.length) {

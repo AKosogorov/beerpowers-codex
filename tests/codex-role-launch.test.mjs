@@ -48,6 +48,15 @@ test('YAML сохраняет типы, многострочную строку,
 
 test('Три назначения приходят на границу вызова под фактическими именами полей', t => {
   const {root, env, charter, put, run} = fixture(t);
+  delete env.BEERPOWERS_SESSION_MODELS_JSON;
+  const missing = run(['database','--effort','medium'],'Исправь индекс на колонке');
+  assert.equal(missing.status,1);
+  assert.equal(missing.stdout,'');
+  assert.match(missing.stderr,/Нет BEERPOWERS_SESSION_MODELS_JSON/);
+  env.BEERPOWERS_SESSION_MODELS_JSON = JSON.stringify(inventory);
+  const implementation = run(['database','--effort','medium'],'Исправь индекс на колонке');
+  assert.equal(implementation.status,0,implementation.stderr);
+  assert.match(JSON.parse(implementation.stdout).message,/локальные гейты.*каталог запуска, точную команду, проверенную ревизию.*код выхода и результат/);
   for (const [task, role, name, model, effort] of [
     ['Перепроверить снимки после фикса','tester','testing-agent','gpt-6.2-sol','medium'],
     ['Выбрать границу блока между слоями','architect','architect-agent','gpt-6.2-astra','xhigh'],

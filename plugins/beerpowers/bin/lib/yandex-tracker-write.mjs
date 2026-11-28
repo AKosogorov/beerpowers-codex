@@ -462,11 +462,6 @@ async function execute(argv,journal) {
     return c;
   }
 
-  function readText(file) {
-    if (!fs.existsSync(file)) die(`нет файла: ${file}`);
-    return input(file).toString('utf8').replace(/\r\n/g, '\n').trim();
-  }
-
   // ---------- команды ----------
 
 
@@ -494,6 +489,8 @@ async function execute(argv,journal) {
     args.pop();
     if (!confirmed && !requested) die('--retry requires the original confirmation or request ID');
   }
+  const verbatim = cmd === 'comment' && args.at(-1) === '--verbatim';
+  if (verbatim) args.pop();
   if (!Object.hasOwn(syntax,cmd) || args.length < syntax[cmd][0] || args.length > syntax[cmd][1]) die('Unexpected tracker write arguments');
   const keyed = !['template','check','create'].includes(cmd);
   if (keyed && !issueKey.test(args[0])) die('Expected PROJECT-NNN');
@@ -530,6 +527,7 @@ async function execute(argv,journal) {
     let links;
     let text;
     let textField;
+    let stdinDigest;
     const attachments = new Set();
     if (taskDraft) {
       const doc = parseDraft(args.at(-1));
@@ -548,10 +546,17 @@ async function execute(argv,journal) {
     } else if (commentFile) {
       const errors = [];
       const warnings = [];
-      draftDir = path.dirname(path.resolve(commentFile));
-      const source = readText(commentFile);
-      text = cmd === 'move' ? unsignedText(source,errors) : checkText(source,draftDir,errors,warnings);
-      if (!text) errors.push('пустой комментарий');
+      const stdin = cmd === 'comment' && commentFile === '-';
+      draftDir = stdin ? root : path.dirname(path.resolve(commentFile));
+      const bytes = stdin ? fs.readFileSync(0) : input(commentFile);
+      if (stdin) stdinDigest = hash(bytes);
+      const source = bytes.toString('utf8').replace(/^\uFEFF/, '');
+      if (verbatim) text = source.replace(/(?:\r?\n)+$/, '');
+      else {
+        const normalized = source.replace(/\r\n/g,'\n').trim();
+        text = cmd === 'move' ? unsignedText(normalized,errors) : checkText(normalized,draftDir,errors,warnings);
+      }
+      if (!text.trim()) errors.push('пустой комментарий');
       report({errors,warnings});
       if (errors.length) die('некорректный комментарий');
       textField = cmd === 'move' ? 'comment' : 'text';
@@ -559,7 +564,7 @@ async function execute(argv,journal) {
     } else if (cmd === 'move') {
       body = moveFields;
     }
-    if (textField) for (const ref of localRefs(text)) attachments.add(path.resolve(draftDir, ref.target));
+    if (textField && !verbatim) for (const ref of localRefs(text)) attachments.add(path.resolve(draftDir, ref.target));
     if (cmd === 'attach') for (const file of args.slice(1)) attachments.add(path.resolve(file));
     for (const file of attachments) input(file);
     client = connection();
@@ -568,6 +573,8 @@ async function execute(argv,journal) {
     const target = keyed ? {issue:args[0]} : {queue:body.queue};
     plan = {operation:cmd,arguments:args.slice(),target,files,attachments:[...attachments].map(filePlan),
       endpoint:client.endpoint,version:client.version,organization:client.orgId,orgType:client.orgType};
+    if (verbatim) plan.verbatim = true;
+    if (stdinDigest) plan.stdinSha256 = stdinDigest;
     if (body) plan.body = body;
     if (links) plan.links = links;
     if (textField) {
@@ -585,7 +592,7 @@ async function execute(argv,journal) {
         return;
       }
     }
-    if (cmd === 'delete-comment') {
+    if (cmd === 'delete-comment' || cmd === 'edit-comment') {
       const c = await ownComment(args[0],args[1]);
       plan.comment = {author:authorOf(c),text:c.text};
     }
@@ -650,7 +657,7 @@ async function execute(argv,journal) {
     }
     case 'comment': {
       const [key] = args;
-      const { text, ids } = await upload(plan.body.text, draftDir, null);
+      const { text, ids } = verbatim ? {text:plan.body.text, ids:[]} : await upload(plan.body.text, draftDir, null);
       const c = await api('POST', `/issues/${key}/comments`, { ...plan.body, text, ...(ids.length ? { attachmentIds:ids } : {}) });
       emit(`комментарий ${c.id}: ${WEB}/${key}\n`);
       break;
@@ -672,10 +679,8 @@ async function execute(argv,journal) {
     }
     case 'edit-comment': {
       const [key, id] = args;
-      await ownComment(key, id);
-      // Файл кладётся прямо в задачу: временную загрузку привязывает только создание комментария.
-      const { text } = await upload(plan.body.text, draftDir, key);
-      await api('PATCH', `/issues/${key}/comments/${id}`, { ...plan.body, text });
+      const { text, ids } = await upload(plan.body.text, draftDir, null);
+      await api('PATCH', `/issues/${key}/comments/${id}`, { ...plan.body, text, ...(ids.length ? {attachmentIds:ids} : {}) });
       emit(`комментарий ${id} изменён: ${WEB}/${key}\n`);
       break;
     }

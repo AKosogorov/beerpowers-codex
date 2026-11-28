@@ -27,10 +27,11 @@ sub is_feature_brief {
 }
 
 sub feature_base {
-    my @bases = $_[0] =~ /^Base-SHA: ([0-9a-f]{40}|[0-9a-f]{64})\r?$/mg;
+    my $brief = markdown_prose($_[0]);
+    my @bases = $brief =~ /^Base-SHA: ([0-9a-f]{40}|[0-9a-f]{64})\r?$/mg;
     if (!@bases && defined $ENV{BEERPOWERS_REPO}) {
         my $repo = $ENV{BEERPOWERS_REPO};
-        @bases = $_[0] =~ /^Base-SHA \Q$repo\E: ([0-9a-f]{40}|[0-9a-f]{64})\r?$/mg;
+        @bases = $brief =~ /^Base-SHA \Q$repo\E: ([0-9a-f]{40}|[0-9a-f]{64})\r?$/mg;
     }
     die "Feature preflight needs exactly one verified Base-SHA\n" unless @bases == 1;
     return $bases[0];
@@ -229,8 +230,9 @@ sub task_start {
             die "Invalid saved feature base\n" unless $saved_base =~ /\A(?:[a-f0-9]{40}|[a-f0-9]{64})\z/;
             $sha = $saved_base;
         }
-        $body .= "\nBase-SHA: $sha\n" unless defined $before;
     }
+    $body .= "\nBase-SHA: $sha\n" if $class ne 'trivial' && !defined $before
+        && (!$pending || sha256_hex($body) ne $pending->{after});
     die "Resume with the original brief and clarifications: $file\n"
         if $pending && sha256_hex($body) ne $pending->{after};
     die "Task conflicts with default branch $base\n" if ref_collision($code, $base);

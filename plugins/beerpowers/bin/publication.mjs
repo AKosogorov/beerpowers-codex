@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { authorModel, draftStyle, modelSignature } from './lib/model-signature.mjs';
+import { taskData } from './lib/git-repositories.mjs';
 
 import { showHelp } from './lib/cli-help.mjs';
 
@@ -78,8 +79,7 @@ export function reportLines(file) {
 export function reviewed(task, repo, head, targetSha, cwd) {
   const taskFolder = `memory/tasks/${task}/`;
   const brief = read(taskFolder + 'preflight.md');
-  const records = taskFolder + 'checkouts.json';
-  const selected = fs.existsSync(localPath(records)) ? json(read(records)).repos : null;
+  const selected = taskData(task).saved.repos;
   if (selected) check(Array.isArray(selected) && selected.filter(r => r.name === repo).length === 1, 'Product missing from task checkouts');
   const multi = selected?.length > 1;
   const feature = /^Класс: feature\./m.test(brief.toString());

@@ -21,7 +21,7 @@ metadata:
 `снят` (предпосылка умерла, риск принят, дубль).
 
 **Этот файл генерируется:** `$beerpowers tech-debt-index`; проверка актуальности —
-`node <пакет>/bin/workspace-check.mjs`. Текст вне управляемой таблицы сохраняется.
+`node "$packageRoot/bin/workspace-check.mjs"`. Текст вне управляемой таблицы сохраняется.
 
 <!-- beerpowers:tech-debt:start -->
 
