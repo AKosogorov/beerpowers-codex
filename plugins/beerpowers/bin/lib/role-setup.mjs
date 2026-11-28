@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { workspacePath } from './ui-workspace.mjs';
 import { readCharter } from './role-context.mjs';
 import { blocks, markupLines } from './markdown-engine.mjs';
-import { parseFrontmatter, roleFilename, roleMetadata, setFrontmatterField } from './role-metadata.mjs';
+import { isClaudeModel, parseFrontmatter, roleFilename, roleMetadata, setFrontmatterField } from './role-metadata.mjs';
 
 const templates = fileURLToPath(new URL('../../templates/', import.meta.url));
 const template = path => readFileSync(resolve(templates, path), 'utf8');
@@ -25,7 +25,6 @@ const entries = dir => {
 const hasHeader = text => /^\uFEFF?---[ \t]*\r?\n/.test(text);
 const normalize = text => text.replaceAll('\r\n', '\n');
 const nl = text => text?.includes('\r\n') ? '\r\n' : '\n';
-const json = (text, fallback) => text ? JSON.parse(text.replace(/^\uFEFF/, '')) : fallback;
 const object = x => x && typeof x === 'object' && !Array.isArray(x);
 const digest = text => createHash('sha256').update(normalize(text)).digest('hex');
 const strings = list => Array.isArray(list) && list.every(v => typeof v === 'string' && v.trim()) && new Set(list).size === list.length;
@@ -146,10 +145,10 @@ export function refreshRole(text, canonical, previous, ui, file) {
 }
 
 export function planRoles(input) {
-  const {detected, retired, roles, project, track, ui, preview, inputs} = input;
+  const {detected, roles, project, track, ui, preview, inputs} = input;
   const products = Object.keys(detected);
   const changes = [], report = inputs.dependencies ?? [];
-  const assigned = {}, legacySkills = {}, bindings = new Map(), obsolete = [];
+  const assigned = {}, bindings = new Map();
   const charter = read('.codex/team-charter.md') ?? '';
   const hasRoster = /^## Состав[ \t]*\r?$/m.test(charter) && /^ *\|[^\r\n]*Read on spawn/m.test(charter);
   const teams = {}, skills = inputs.skills ?? {}, available = inputs.available;
@@ -164,60 +163,32 @@ export function planRoles(input) {
     }
   }
   const change = (path, before, after) => {
-    if (before !== after) changes.push({path, action: after === null ? 'DELETE' : before === null ? 'CREATE' : 'UPDATE',
-      content: after === null ? '' : Buffer.from(after).toString('base64')});
+    if (before !== after) changes.push({path, action: before === null ? 'CREATE' : 'UPDATE',
+      content: Buffer.from(after).toString('base64')});
   };
-  function binding(id, repo, paths, text) {
-    if (!/^[\w-]+$/.test(id) || !strings(paths) || !paths.length) throw Error('Invalid path rule: ' + id);
-    const record = bindings.get(id) ?? {scopes:{}, text:null};
-    for (const relative of paths) if (relative !== '.') workspacePath(root, 'projects/' + repo + '/' + relative);
-    if (record.scopes[repo] && JSON.stringify([...paths].sort()) !== JSON.stringify([...record.scopes[repo]].sort())) throw Error('Rule conflicts with existing paths: ' + id);
-    if (text && record.text && normalize(text) !== normalize(record.text)) throw Error('Rule conflicts with existing text: ' + id);
-    record.scopes[repo] = paths; record.text ??= text;
-    bindings.set(id, record);
-  }
-  const legacy = path => {
-    const content = read(path);
-    if (content === null) return null;
-    const value = json(content);
-    if (!object(value) || !object(value.rules) || Object.keys(value).some(k => !['rules','team','skills','stacks'].includes(k)) ||
-        (value.team && (!strings(value.team) || !value.team.length || value.team.some(v => !roles.includes(roleId(v))))) ||
-        (value.skills && !object(value.skills)) || (value.stacks && !strings(value.stacks))) throw Error('Invalid legacy role settings: ' + path);
-    obsolete.push(path); return value;
-  };
-  const common = legacy('.codex/role-settings.json');
-  const scoped = {};
-  for (const name of entries('.codex/role-settings')) {
-    if (!name.endsWith('.json') || !products.includes(name.slice(0,-5))) throw Error('Unknown legacy project: ' + name);
-    scoped[name.slice(0,-5)] = legacy('.codex/role-settings/' + name);
-  }
   for (const name of products) {
-    const profile = scoped[name] ?? (products.length === 1 || name === (input.legacyRepo ?? products[0]) ? common : null);
-    const facts = detected[name], defaults = facts.defaults;
+    const defaults = detected[name];
     const selected = hasRoster ? [...readCharter(root, name).team.keys()] : [];
-    const team = selected.length ? selected : profile?.team?.map(roleId) ?? defaults.team;
+    const team = selected.length ? selected : defaults.team;
     teams[name] = [...new Set([...team, ...(track ? (track === 'pm' ? ['product'] : defaults.team) : [])])];
-    for (const [role, values] of Object.entries({...skills[name], ...profile?.skills})) {
+    for (const [role, values] of Object.entries(skills[name] ?? {})) {
       const id = roleId(role);
       if (![...roles,'team-lead'].includes(id) || !strings(values) || !values.every(validSkill)) throw Error('Invalid role skills: ' + role);
-      if (Object.hasOwn(profile?.skills ?? {}, role)) (legacySkills[id] ??= {})[name] = values;
-      else if (available && values.some(skill => !available.includes(skill))) throw Error('Unavailable assigned skill for ' + name + '/' + role);
+      if (available && values.some(skill => !available.includes(skill))) throw Error('Unavailable assigned skill for ' + name + '/' + role);
       (assigned[id] ??= {})[name] = values;
     }
-    for (const [id, paths] of Object.entries(profile?.rules ?? {})) {
-      const text = read('.codex/rules/' + id + '.md');
-      if (!text?.trim()) throw Error('Missing project rule: ' + id);
-      if (retired[id] && digest(text) === retired[id] && JSON.stringify([...paths].sort()) === JSON.stringify(facts.paths[id])) continue;
-      binding(id, name, paths, null);
-    }
     for (const [id, rule] of Object.entries(inputs.rules?.[name] ?? {})) {
-      if (!strings(rule.paths) || !rule.paths.length || typeof rule.text !== 'string' || !rule.text.trim() || rule.text.includes('\0')) throw Error('Invalid project rule: ' + id);
+      if (!/^[\w-]+$/.test(id) || !strings(rule.paths) || !rule.paths.length || typeof rule.text !== 'string' || !rule.text.trim() || rule.text.includes('\0')) throw Error('Invalid project rule: ' + id);
       for (const relative of rule.paths) {
         const checkout = workspacePath(root, 'projects/' + name), target = workspacePath(root, 'projects/' + name + '/' + relative);
         const tracked = execFileSync('git',['-C',checkout,'--literal-pathspecs','ls-files','-z','--',relative],{encoding:'utf8'});
         if (!existsSync(target) || !tracked.split('\0').some(p => p === relative || p.startsWith(relative + '/'))) throw Error('Project rule path has no tracked files: ' + name + '/' + relative);
       }
-      binding(id, name, rule.paths, rule.text.replace(/\n?$/, '\n'));
+      const text = rule.text.replace(/\n?$/, '\n');
+      const record = bindings.get(id) ?? {scopes:{}, text};
+      if (normalize(record.text) !== normalize(text)) throw Error('Rule conflicts with existing text: ' + id);
+      record.scopes[name] = rule.paths;
+      bindings.set(id, record);
     }
   }
   for (const name of new Set([...entries('.claude/rules').filter(n => /^[\w-]+\.md$/.test(n)), ...[...bindings.keys()].map(id => id + '.md')])) {
@@ -226,7 +197,7 @@ export function planRoles(input) {
     const record = bindings.get(name.slice(0,-3));
     if (record) {
       const parsed = result && hasHeader(result) ? parseFrontmatter(result, path) : null;
-      if (record.text && result && normalize(parsed?.body ?? result).trimEnd() !== normalize(record.text).trimEnd()) throw Error('Rule conflicts with existing text: ' + path);
+      if (result && normalize(parsed?.body ?? result).trimEnd() !== normalize(record.text).trimEnd()) throw Error('Rule conflicts with existing text: ' + path);
       result ??= record.text;
       const paths = Object.entries(record.scopes).flatMap(([repo, values]) => values.map(p => 'projects/' + repo + (p === '.' ? '' : '/' + p)));
       if (!parsed) result = ['---', 'paths: ' + JSON.stringify(paths), '---', ''].join(nl(result)) + result;
@@ -251,13 +222,6 @@ export function planRoles(input) {
       const values = products.map(repo => scoped[repo] ?? fields.skills ?? []);
       if (values.every(v => JSON.stringify(v) === JSON.stringify(values[0]))) text = setFrontmatterField(text, 'skills', values[0]);
       else text = setFrontmatterField(text, 'project_skills', scoped);
-    } else if (legacySkills[role]) {
-      const overrides = {...fields.project_skills};
-      for (const [repo, old] of Object.entries(legacySkills[role])) {
-        if (overrides[repo] && JSON.stringify(overrides[repo]) !== JSON.stringify(old)) throw Error('Conflicting project skill assignment: ' + repo + '/' + role);
-        if (JSON.stringify(old) !== JSON.stringify(fields.skills ?? [])) overrides[repo] = old;
-      }
-      if (Object.keys(overrides).length) text = setFrontmatterField(text, 'project_skills', overrides);
     }
     const selected = parseFrontmatter(text).fields;
     for (const repo of preview ? products : []) for (const skill of selected.project_skills?.[repo] ?? selected.skills ?? []) {
@@ -293,6 +257,7 @@ export function planRoles(input) {
     for (const key of ['name','description','model','color','tools']) {
       if (!Object.hasOwn(existingFields, key)) result = setFrontmatterField(result, key, parsed.fields[key] ?? defaults[key], path);
     }
+    if (isClaudeModel(parseFrontmatter(result, path).fields.model)) result = setFrontmatterField(result, 'model', defaults.model, path);
     result = applySkills(result, role, Boolean(base && hasHeader(base)) || Boolean(archive));
     const fields = roleMetadata(result, role, path);
     change(path, before, result);
@@ -324,8 +289,6 @@ export function planRoles(input) {
     leadHeader = parseFrontmatter(edited).header;
     if (before) change(path, before, withHeader ? edited : leadHeader.replace(/\r?\n/g, nl(before)) + before);
   }
-  // Старые конфиги удаляются только после доставки значений всем новым владельцам.
-  for (const path of obsolete) change(path, read(path), null);
   return {changes, teams, report, leadHeader};
 }
 

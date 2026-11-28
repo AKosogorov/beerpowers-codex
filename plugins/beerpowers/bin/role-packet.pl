@@ -2,21 +2,13 @@
 use strict;
 use warnings;
 use JSON::PP ();
-use Encode qw(encode decode FB_CROAK);
+use Encode qw(encode decode);
 
 my @role_names = qw(architect auditor backend database devops explorer frontend implementer product reviewer tester);
-# Fingerprints of the three historical package defaults after LF normalization.
-my %retired_rule = (
-    backend => '29b52460efa353d6869477be40b0f0b69fb77a3f41445519663eb8d2e7f0c867',
-    frontend => 'c424ba8945c0015559c15e7a5ca89408edf01bce768e25b2d35a8cd36fc0e3b7',
-    migrations => '5d2027843e9fa6d4f70ff426b5f474895f57fc245391a633faea9885b8ef21c0',
-);
-
-# Infer defaults from tracked manifests. Teams can extend the resulting project
-# configuration for services discovered through deployment files or project docs.
-sub discover_project_rules {
+# Определяет состав команды по манифестам проекта и выбранному треку.
+sub discover_project_team {
     my ($product, $track, $size) = @_;
-    my (%seen, %paths, %layer);
+    my (%seen, %layer);
     my @tracked = split /\0/, git_output('-C', $product, 'ls-files', '--cached', '-z', '--',
         'composer.json', 'package.json', 'supabase/config.toml', '.gitlab-ci.yml',
         ':(glob)**/composer.json', ':(glob)**/package.json', ':(glob)**/supabase/config.toml');
@@ -27,8 +19,6 @@ sub discover_project_rules {
         if ($path eq '.gitlab-ci.yml') { $seen{gitlab} = 1; next }
         if ($path =~ m{(?:\A|/)supabase/config\.toml\z}) {
             $seen{supabase} = $seen{postgres} = 1;
-            (my $migrations = $path) =~ s{config\.toml\z}{migrations};
-            $paths{migrations}{$migrations} = 1;
             next;
         }
         my $manifest = eval { parse_json(read_file($absolute)) };
@@ -37,26 +27,17 @@ sub discover_project_rules {
         for my $field (qw(require require-dev dependencies devDependencies)) {
             $deps{$_} = 1 for keys %{ref($manifest->{$field}) eq 'HASH' ? $manifest->{$field} : {}};
         }
-        (my $prefix = $path) =~ s{[^/]+\z}{};
         if ($deps{'laravel/framework'}) {
             $seen{laravel} = 1;
             $layer{backend} = 1;
-            $paths{backend}{$prefix . 'app'} = 1;
-            $paths{migrations}{$prefix . 'database/migrations'} = 1;
         }
-        if ($deps{nuxt}) {
-            $seen{nuxt} = 1;
-            $paths{frontend}{$prefix . $_} = 1 for qw(app components composables layouts pages plugins);
-        }
+        $seen{nuxt} = 1 if $deps{nuxt};
         $layer{frontend} = 1 if grep { $deps{$_} } qw(nuxt next vue react svelte astro @angular/core);
         $layer{backend} = 1 if grep { $deps{$_} } qw(express fastify @nestjs/core symfony/framework-bundle);
         $seen{supabase} = $seen{postgres} = 1 if $deps{'@supabase/supabase-js'};
         $seen{elasticsearch} = 1 if $deps{'@elastic/elasticsearch'} || $deps{'elasticsearch/elasticsearch'};
         $seen{postgres} = 1 if $deps{pg} || $deps{'ext-pdo_pgsql'};
     }
-    my %dirs = map { $_ => [sort keys %{$paths{$_}}] } keys %paths;
-    # Git returns UTF-8 bytes. JSON::PP->utf8 expects character strings.
-    for my $roots (values %dirs) { $_ = decode('UTF-8', $_, FB_CROAK) for @$roots }
     my @impl;
     push @impl, 'backend' if $layer{backend};
     push @impl, 'frontend' if $layer{frontend};
@@ -66,8 +47,7 @@ sub discover_project_rules {
     push @team, 'explorer' if $track ne 'pm' && $size ne 'compact';
     push @team, qw(devops auditor) if $track ne 'pm' && $size eq 'extended';
     push @team, 'product' if $track ne 'dev';
-    # The former inferred scopes are retained only to identify unmodified legacy bindings.
-    return ({stacks => [sort keys %seen], rules => {}, team => \@team}, \%dirs);
+    return {stacks => [sort keys %seen], team => \@team};
 }
 
 my $lead_skill_header;
@@ -83,8 +63,8 @@ sub stage_six_setup {
     unless ($doctor) {
         my %detected;
         for my $name (@$products) {
-            my ($defaults, $paths) = discover_project_rules("projects/$name", $default_track, $size);
-            $detected{$name} = {defaults => $defaults, paths => $paths};
+            my $defaults = discover_project_team("projects/$name", $default_track, $size);
+            $detected{$name} = $defaults;
             print "Detected stacks (projects/$name): ", join(', ', @{$defaults->{stacks}}), "\n" if $interactive_plan;
         }
         my %params = (slots => 'ROLE_SLOTS', skills => 'ROLE_SKILLS', available => 'SESSION_SKILLS',
@@ -96,8 +76,8 @@ sub stage_six_setup {
         }
         my ($input, $arg) = File::Temp::tempfile('beerpowers-role-plan-XXXXX', TMPDIR => 1, UNLINK => 1);
         binmode $input;
-        print {$input} $json->encode({detected => \%detected, retired => \%retired_rule,
-            roles => \@role_names, legacyRepo => $legacy_repo, track => $track, inputs => \%inputs, ui => $ui,
+        print {$input} $json->encode({detected => \%detected,
+            roles => \@role_names, track => $track, inputs => \%inputs, ui => $ui,
             preview => $interactive_plan ? JSON::PP::true : JSON::PP::false, project => decode('UTF-8', $project_label)});
         close $input or die "$arg: $!\n";
         my $node = $ENV{BEERPOWERS_NODE} || 'node';
@@ -117,7 +97,6 @@ sub stage_six_setup {
             my $content = MIME::Base64::decode_base64($edit->{content});
             if ($edit->{action} eq 'CREATE') { seed($path, $content) }
             elsif ($edit->{action} eq 'UPDATE') { replace_setup_file($path, $content) }
-            elsif ($edit->{action} eq 'DELETE') { retire_role_settings($path) }
             else { die "Unknown role setup action\n" }
         }
         if ($interactive_plan && (exists($inputs{dependencies}) || @{$plan->{report}})) {
@@ -146,7 +125,7 @@ sub stage_six_setup {
     for my $repo (@$products) {
         my $guide = $test_inputs->{$repo}{guide} // "memory/commands/$repo.md";
         my $command = $test_inputs->{$repo}{command};
-        my ($defaults) = discover_project_rules("projects/$repo", $track || 'dev', $size);
+        my $defaults = discover_project_team("projects/$repo", $track || 'dev', $size);
         my %stack = map { $_ => 1 } @{$defaults->{stacks}};
         my $msg = defined($command) ? "Проверка проекта: $command" : "Проверь применимые гейты из $guide.";
         my $mask = "*/projects/$repo/*|*/worktrees/*/$repo/*";

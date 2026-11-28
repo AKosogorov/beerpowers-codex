@@ -1,7 +1,7 @@
 ---
 name: auditor-agent
 description: "Аудитор (роль `auditor` в charter): проактивный security- и perf-аудит вне рамок конкретной задачи — секреты, авторизация эндпоинтов, работа с файлами и хранилищем, N+1 и отсутствующие индексы, тяжёлые запросы, вес бандла; по запросу — архитектурный обзор: где мелкие модули стоит углубить. Код не правит, выдаёт findings с приоритетами и маршрутизацией."
-model: opus
+model: gpt-6.2-astra
 color: red
 memory: "project"
 tools: [Read, Grep, Glob, Write, Bash, WebSearch, Skill, SendMessage]

@@ -1,7 +1,7 @@
 ---
 name: frontend-agent
 description: "Frontend-разработчик (роль `frontend` в charter): страницы, компоненты, composables, stores, layouts и стили на {{FRONTEND_FRAMEWORK}}. Типы API берёт только из единого источника типов проекта, zero any, обязательные loading/empty/error и self-check в реальном браузере. Сгенерированный код руками не правит."
-model: opus
+model: gpt-6.2-astra
 color: green
 memory: "project"
 tools: [Bash, Read, Grep, Glob, Write, Edit, Skill, SendMessage, mcp__Claude_Browser__preview_start, mcp__Claude_Browser__preview_logs, mcp__Claude_Browser__preview_stop, mcp__Claude_Browser__navigate, mcp__Claude_Browser__computer, mcp__Claude_Browser__browser_batch, mcp__Claude_Browser__read_page, mcp__Claude_Browser__get_page_text, mcp__Claude_Browser__find, mcp__Claude_Browser__form_input, mcp__Claude_Browser__read_console_messages, mcp__Claude_Browser__read_network_requests, mcp__Claude_Browser__resize_window, mcp__Claude_Browser__tabs_context, mcp__Claude_Browser__tabs_create, mcp__Claude_Browser__tabs_select, mcp__Claude_Browser__tabs_close, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__read_page, mcp__claude-in-chrome__get_page_text, mcp__claude-in-chrome__find, mcp__claude-in-chrome__form_input, mcp__claude-in-chrome__read_console_messages, mcp__claude-in-chrome__read_network_requests, mcp__claude-in-chrome__resize_window]

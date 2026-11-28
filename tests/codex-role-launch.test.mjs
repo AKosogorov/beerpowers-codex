@@ -18,7 +18,7 @@ function fixture(t) {
   const roles = {architect:'architect-agent', tester:'testing-agent', database:'database-agent'};
   const charter = ['## Состав', '| Роль | Проекты | Read on spawn | Mandatory practices |', '|---|---|---|---|',
     ...Object.keys(roles).map(role => '| `' + role + '` | demo | `memory/project/' + role + '.md` | beerpowers:minimal-diff |'),
-    '', '| Роль | Модель | Причина |','|---|---|---|','| opus | gpt-6.2-astra | политика |','| sonnet | gpt-6.2-sol | политика |',
+    '', '| Роль | Модель | Причина |','|---|---|---|',
     '', '```','## Состав','| Роль | Read on spawn |','|---|---|','| fake | секрет |','```'].join('\n');
   put('.codex/team-charter.md', charter);
   put('.codex/workspace.json', '{}'); put('projects/demo/.git', 'synthetic\n');
@@ -26,7 +26,7 @@ function fixture(t) {
   put('.codex/rules/demo.md', '---\npaths:\n  - "projects/demo/app/**"\n---\ndomain\n');
   for (const [role, name] of Object.entries(roles)) {
     put('.codex/agents/' + name + '.md', ['---', 'name: ' + name, 'description: >-', '  роль', '  проекта', 'color: purple',
-      'tools: [Read, SendMessage, Skill]', 'skills:\n  - sample', 'model: ' + (role === 'tester' ? 'sonnet' : 'opus'),
+      'tools: [Read, SendMessage, Skill]', 'skills:\n  - sample', 'model: ' + (role === 'tester' ? 'gpt-6.2-sol' : 'gpt-6.2-astra'),
       ...(role === 'tester' ? [] : ['memory: project']), '---','# задача'].join('\n'));
     put('memory/project/' + role + '.md', 'read:' + role);
     put('.codex/agent-memory/' + role + '/MEMORY.md', 'personal:' + role);
@@ -71,12 +71,14 @@ test('Три назначения приходят на границу вызо�
   assert.throws(() => rolePacket(root,'demo','memory/commands/demo.md','db',[],env));
   assert.throws(() => rolePacket(root,'demo','memory/commands/demo.md','testing-agent',[],env));
   assert.equal(run(['tester','--effort','max'],'Проверка').status,1);
-  put('.codex/team-charter.md', charter.replace('| opus |','| architect | gpt-6.2-sol | правило проекта |\n| opus |'));
+  put('.codex/team-charter.md', charter.replace('|---|---|---|\n\n', '|---|---|---|\n| architect | gpt-6.2-sol | правило проекта |\n\n'));
   assert.equal(JSON.parse(run(['architect','--effort','medium'],'Задача').stdout).model,'gpt-6.2-sol');
   assert.equal(JSON.parse(run(['architect','--effort','medium','--model','gpt-6.2-astra'],'Задача').stdout).model,'gpt-6.2-astra');
   put('.codex/team-charter.md', charter + '\n| Роль | Модель | Причина |\n|---|---|---|\n| gpt-6.2-astra | gpt-6.2-sol | имя пользователя имеет приоритет |');
   assert.equal(JSON.parse(run(['architect','--effort','medium','--model','gpt-6.2-astra'],'Задача').stdout).model,'gpt-6.2-astra');
   assert.equal(run(['architect','--effort','medium','--model','missing'],'Задача').stdout,'');
+  put('.codex/team-charter.md', charter + '\n| Роль | Модель | Причина |\n|---|---|---|\n| opus | gpt-6.2-astra | старая запись |');
+  assert.equal(run(['architect','--effort','medium','--model','opus'],'Задача').status,1);
   const brief = '.codex/agents/database-agent.md';
   let custom = readFileSync(join(root, brief),'utf8');
   for (const [key,value] of Object.entries({name:'storage-owner', color:'cyan', memory:'local',

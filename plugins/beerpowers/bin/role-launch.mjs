@@ -16,8 +16,7 @@ export function spawnArguments(packet, task, values, inventory, root) {
   const skipped = values['without-skill'] ?? [];
   if (packet.missing.some(name => !skipped.includes(name))) throw Error('Недоступны назначенные навыки: ' + packet.missing.join(', '));
   if (skipped.some(name => !packet.missing.includes(name))) throw Error('--without-skill указывает навык вне списка недоступных');
-  const chosen = values.model ?? models.get(packet.role) ?? fields.model;
-  const model = ['opus','sonnet','haiku'].includes(chosen) ? (models.get(chosen) ?? chosen) : chosen;
+  const model = values.model ?? models.get(packet.role) ?? fields.model;
   const reasoning_effort = values.effort;
   if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory) ||
       !Object.hasOwn(inventory, model) || !Array.isArray(inventory[model]) || !inventory[model].includes(reasoning_effort)) {

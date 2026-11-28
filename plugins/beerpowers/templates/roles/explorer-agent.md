@@ -1,7 +1,7 @@
 ---
 name: explorer-agent
 description: "Разведчик ищет точки входа, зависимости, примеры и проверки в режиме чтения."
-model: haiku
+model: gpt-6.1-terra
 color: gray
 tools: [Read, Grep, Glob, Bash]
 skills: []

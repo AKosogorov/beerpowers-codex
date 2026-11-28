@@ -19,6 +19,11 @@ function list(value, source) {
 
 export const roleFilename = role => (role === 'tester' ? 'testing' : role) + '-agent.md';
 
+// Setup распознаёт старое значение, чтобы записать штатную модель роли.
+export function isClaudeModel(value) {
+  return typeof value === 'string' && /^(?:(?:anthropic[/:.])?claude(?:[-/:]|$)|(?:opus|sonnet|haiku)(?:$|[-:\[])|opusplan$|inherit$)/i.test(value);
+}
+
 export function roleMetadata(text, role, source) {
   const {fields} = parseFrontmatter(text, source);
   for (const key of ['name', 'description', 'color', 'model']) {

@@ -1,7 +1,7 @@
 ---
 name: devops-agent
 description: "DevOps-инженер (роль `devops` в charter): CI-пайплайн, Dockerfile и docker-compose для dev/prod, переменные окружения, деплой-гейты. Секреты в код не пишет, необратимые действия на проде — только с явного подтверждения пользователя."
-model: sonnet
+model: gpt-6.2-sol
 color: yellow
 memory: "project"
 tools: [Bash, Read, Grep, Glob, Write, Edit, Skill, SendMessage]
